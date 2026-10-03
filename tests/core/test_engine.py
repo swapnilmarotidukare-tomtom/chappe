@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import Any, ClassVar
 
@@ -294,8 +294,8 @@ def raising_metrics(name: str) -> None:
 class DeadlineTransport(SlackTransport):
     """Records the deadline of every parent post and update."""
 
-    def __init__(self, api: FakeSlackApi) -> None:
-        super().__init__(api)
+    def __init__(self, api: FakeSlackApi, clock: Callable[[], float]) -> None:
+        super().__init__(api, clock=clock)
         self.deadlines: list[float] = []
 
     def post_parent(
@@ -381,9 +381,104 @@ def test_final_read_back_is_skipped_when_the_budget_is_spent() -> None:
 
 def test_run_finished_gets_the_final_budget_and_other_events_the_event_budget() -> None:
     api, variables = FakeSlackApi(), FakeVariables()
-    transport = DeadlineTransport(api)
+    transport = DeadlineTransport(api, clock=lambda: 1000.0)
     w = writer(api, variables, clock=lambda: 1000.0, transport=transport)
-    w.handle(stage(R, P, P), EventKind.STEP_STARTED)
-    w.handle(stage(S, R, P), EventKind.STEP_FINISHED)
-    w.handle(stage(S, S, S, finished=ProcessState.SUCCEEDED), EventKind.RUN_FINISHED)
+    assert w.handle(stage(R, P, P), EventKind.STEP_STARTED) is HandleResult.SENT
+    assert w.handle(stage(S, R, P), EventKind.STEP_FINISHED) is HandleResult.SENT
+    final = stage(S, S, S, finished=ProcessState.SUCCEEDED)
+    assert w.handle(final, EventKind.RUN_FINISHED) is HandleResult.SENT
     assert transport.deadlines == [1010.0, 1010.0, 1030.0]
+
+
+def test_a_hand_deleted_parent_is_replaced_by_a_new_one() -> None:
+    """Spec 9.2 "Parent message deleted -> post a new parent and update the store"."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    w = writer(api, variables)
+    w.handle(stage(R, P, P))
+    (old,) = api.top_level(CHANNEL)
+    api.delete(CHANNEL, old.ts)  # someone deletes the parent by hand
+
+    view = stage(S, R, P)
+    assert w.handle(view) is HandleResult.SENT
+    (new,) = api.top_level(CHANNEL)
+    assert new.ts != old.ts
+    assert new.text == render(view).parent.text
+    saved = store_for(variables).load(KEY)
+    assert saved is not None
+    assert saved.parent_ref == new.ts
+    assert old.ts in saved.cleared_parents and not saved.degraded
+
+    # Later events keep using the new parent; the deleted lower ts never wins again.
+    assert w.handle(stage(S, S, R)) is HandleResult.SENT
+    assert [m.ts for m in api.top_level(CHANNEL)] == [new.ts]
+
+
+def test_a_failed_final_event_after_a_hand_delete_still_posts_the_alert() -> None:
+    api, variables = FakeSlackApi(), FakeVariables()
+    w = writer(api, variables)
+    w.handle(stage(S, R, P))
+    (old,) = api.top_level(CHANNEL)
+    api.delete(CHANNEL, old.ts)
+
+    failed = stage(S, F, P, finished=ProcessState.FAILED)
+    assert w.handle(failed, EventKind.RUN_FINISHED) is HandleResult.SENT
+    (parent,) = api.top_level(CHANNEL)
+    assert parent.ts != old.ts
+    expected = render(failed)
+    assert expected.alerts
+    replies = [m.text for m in api.replies(CHANNEL, parent.ts)]
+    assert all(alert.text in replies for alert in expected.alerts)
+
+
+def test_an_unreadable_store_sends_nothing_and_keeps_the_variable() -> None:
+    """Spec 9.2 "Store unreadable -> skip sending"."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    variables.data[key_for(KEY)] = "{not json"
+    assert writer(api, variables).handle(stage(R, P, P)) is HandleResult.ERROR
+    assert api.calls == []
+    assert variables.data == {key_for(KEY): "{not json"}
+
+
+def test_replies_stop_at_the_deadline_and_the_next_event_sends_the_rest() -> None:
+    """Never blocks (spec 9.3): once the budget is spent, the rest is left to the next event."""
+    now = [0.0]
+    api, variables = FakeSlackApi(), FakeVariables()
+    theme = StepEntriesTheme()
+    posts: list[str | None] = []
+
+    def slow_reply(channel: str, thread_ts: str | None) -> None:
+        posts.append(thread_ts)
+        if thread_ts is not None:
+            now[0] = 11.0  # the first reply used up the 10s event budget
+
+    api.before_post = slow_reply
+    view = stage(S, S, R)  # two finished steps: two thread entries
+    w = writer(api, variables, theme=theme, clock=lambda: now[0])
+    assert w.handle(view) is HandleResult.SENT
+    (parent,) = api.top_level(CHANNEL)
+    assert len(api.replies(CHANNEL, parent.ts)) == 1
+    saved = store_for(variables).load(KEY)
+    assert saved is not None and len(saved.sent_keys) == 1  # what was sent is saved
+
+    api.before_post = None
+    now[0] = 100.0
+    assert w.handle(stage(S, S, S)) is HandleResult.SENT
+    replies = [m.text for m in api.replies(CHANNEL, parent.ts)]
+    assert len(replies) == len(set(replies)) == 3
+
+
+def test_logs_carry_the_process_key(caplog: pytest.LogCaptureFixture) -> None:
+    """Spec 11: every line carries the process key."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    w = writer(api, variables)
+    w.handle(stage(S, R, P))
+    loser = api.post(CHANNEL, "duplicate parent")
+    store_for(variables).save(KEY, SentState(KEY, stale_parents=frozenset({loser})))
+    api.fail_next(TransportError("cant_delete_message", retryable=False))
+    broken = writer(api, variables, theme=BrokenTheme())
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        broken.handle(stage(S, S, R))
+    delete_line = next(r for r in caplog.records if "duplicate parent" in r.getMessage())
+    theme_line = next(r for r in caplog.records if "theme 'broken' failed" in r.getMessage())
+    assert KEY in delete_line.getMessage()
+    assert KEY in theme_line.getMessage()

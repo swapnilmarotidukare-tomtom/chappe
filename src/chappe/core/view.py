@@ -73,6 +73,12 @@ class Watermark:
     started_steps: int
     occurred_at: datetime | None
 
+    def __post_init__(self) -> None:
+        # Comparing naive and aware datetimes raises TypeError, which would break every later
+        # event of the run; the single guard is here, where all ordering happens. Naive is UTC.
+        if self.occurred_at is not None and self.occurred_at.tzinfo is None:
+            object.__setattr__(self, "occurred_at", self.occurred_at.replace(tzinfo=timezone.utc))
+
     def _order(self) -> tuple[bool, int, int, datetime]:
         return (self.finished, self.settled_steps, self.started_steps, self.occurred_at or _EPOCH)
 

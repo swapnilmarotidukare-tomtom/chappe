@@ -160,3 +160,23 @@ def test_clock_skew_cannot_reorder_progress(
     behind = Watermark(finished, settled, started_b, time_b)
     assert ahead.newer_than(behind)
     assert not behind.newer_than(ahead)
+
+
+def test_a_naive_event_time_is_read_as_utc() -> None:
+    """A source that hands over a naive datetime must not break ordering for every later event."""
+    naive = Watermark(False, 1, 1, datetime(2026, 10, 2, 9, 0))
+    aware = Watermark(False, 1, 1, datetime(2026, 10, 2, 9, 1, tzinfo=timezone.utc))
+    assert naive.occurred_at == datetime(2026, 10, 2, 9, 0, tzinfo=timezone.utc)
+    assert aware.newer_than(naive) and not naive.newer_than(aware)
+    view = ProcessView(
+        key="k",
+        title="K",
+        state=ProcessState.RUNNING,
+        started_at=None,
+        ended_at=None,
+        now=datetime(2026, 10, 2, 9, 2),  # naive, as a careless source might pass it
+        sections=(SectionView("main", "Main", (step("a", StepState.RUNNING),)),),
+    )
+    assert view.watermark.occurred_at == datetime(2026, 10, 2, 9, 2, tzinfo=timezone.utc)
+    later = Watermark(False, 0, 1, datetime(2026, 10, 2, 9, 3, tzinfo=timezone.utc))
+    assert later.newer_than(view.watermark)  # compares instead of raising TypeError

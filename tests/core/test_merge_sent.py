@@ -96,6 +96,35 @@ def test_a_cleared_parent_is_no_longer_stale() -> None:
     assert again.stale_parents == frozenset()
 
 
+def test_a_live_duplicate_takes_over_when_the_canonical_parent_is_cleared() -> None:
+    stored = merge_sent(SentState("k", parent_ref=LOW), SentState("k", parent_ref=HIGH))
+    assert (stored.parent_ref, stored.stale_parents) == (LOW, {HIGH})
+    merged = merge_sent(stored, SentState("k", cleared_parents=frozenset({LOW})))
+    assert merged.parent_ref == HIGH
+    assert merged.stale_parents == frozenset()
+
+
+def test_a_cleared_canonical_parent_never_wins_again() -> None:
+    """A hand-deleted parent is cleared; a new, higher parent takes over (spec 9.2)."""
+    stored = SentState("k", parent_ref=LOW)
+    cleared = merge_sent(stored, SentState("k", cleared_parents=frozenset({LOW})))
+    assert cleared.parent_ref is None
+    assert cleared.stale_parents == frozenset()
+    replaced = merge_sent(cleared, SentState("k", parent_ref=HIGH))
+    assert replaced.parent_ref == HIGH
+    # A late writer that still holds the deleted, lower ts does not win it back.
+    late = merge_sent(replaced, SentState("k", parent_ref=LOW))
+    assert late.parent_ref == HIGH
+    assert late.stale_parents == frozenset()
+    # Nor does a first save that carries a cleared ref of its own.
+    assert (
+        merge_sent(
+            None, SentState("k", parent_ref=LOW, cleared_parents=frozenset({LOW}))
+        ).parent_ref
+        is None
+    )
+
+
 def test_the_last_parent_write_wins_the_text() -> None:
     stored = SentState(
         "k", parent_ref=LOW, parent_text="later", watermark=LATER, parent_written=LATER
@@ -182,13 +211,18 @@ def test_merging_a_history_keeps_every_invariant(history: list[SentState]) -> No
         acc = merge_sent(acc, state)
     assert acc is not None
 
-    refs = [s.parent_ref for s in history if s.parent_ref is not None]
-    assert acc.parent_ref == (min(refs, key=slack_ts_key) if refs else None)
-
     cleared = frozenset().union(*(s.cleared_parents for s in history))
+    # parent_ref is the lowest ref ever merged that is not cleared (a deleted parent never wins);
+    # a ref merged as stale is still a parent in Slack, so it counts
+    refs = {s.parent_ref for s in history if s.parent_ref is not None}
+    refs |= frozenset().union(*(s.stale_parents for s in history))
+    live = refs - cleared
+    assert acc.parent_ref == (min(live, key=slack_ts_key) if live else None)
+
     assert acc.cleared_parents == cleared
     assert not acc.stale_parents & cleared  # a cleared ts is never stale again
     assert acc.parent_ref not in acc.stale_parents
+    assert acc.stale_parents == live - {acc.parent_ref}
 
     assert acc.sent_keys == frozenset().union(*(s.sent_keys for s in history))
     if any(s.watermark is not None and s.watermark.finished for s in history):

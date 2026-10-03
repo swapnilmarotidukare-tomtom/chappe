@@ -140,7 +140,9 @@ class Engine:
         try:
             return self._theme.render(view, self._ctx)
         except Exception:
-            log.exception("chappe: theme %r failed; using the plain theme", self._theme.name)
+            log.exception(
+                "chappe: theme %r failed for %s; using the plain theme", self._theme.name, view.key
+            )
             self._metric("chappe.theme_fallback")
             return self._fallback.render(view, self._ctx)
 
@@ -148,28 +150,41 @@ class Engine:
         self, view: ProcessView, messages: MessageSet, sent: SentState | None, deadline: float
     ) -> HandleResult:
         key, wm = view.key, view.watermark
-        if sent is None or sent.parent_ref is None:
-            posted = self._post_parent(view, messages, deadline)
+        text = messages.parent.text
+        if sent is not None and sent.parent_ref is not None:
+            if not plan_sends(messages, sent).update_parent:
+                state, saved = sent, False
+            else:
+                written = self._write_parent(key, sent.parent_ref, text, wm, deadline)
+                if written is None:  # the parent was re-posted and a newer render owns it
+                    return HandleResult.YIELDED
+                state, saved = written, True
+        else:
+            posted = self._post_parent(key, text, wm, deadline)
             if posted is None:
                 return HandleResult.YIELDED
             state, saved = posted, True
-        elif plan_sends(messages, sent).update_parent:
-            state = self._write_parent(key, sent.parent_ref, messages.parent.text, wm, deadline)
-            saved = True
-        else:
-            state, saved = sent, False
 
         plan = plan_sends(messages, state)
         replies = [(e.key, e.text, e.broadcast) for e in plan.entries]
         replies += [(a.key, a.text, False) for a in plan.alerts]
-        for reply_key, text, broadcast in replies:
+        for index, (reply_key, reply, broadcast) in enumerate(replies):
             if reply_key in state.sent_keys:
                 continue  # a parallel event sent it meanwhile
+            if self._clock() >= deadline:
+                # never block (spec 9.3): what was sent is saved, the next event sends the rest
+                log.warning(
+                    "chappe: time budget spent for %s; %d message(s) left to the next event",
+                    key,
+                    len(replies) - index,
+                )
+                self._metric("chappe.budget_spent")
+                return HandleResult.SENT
             parent = state.parent_ref
             if parent is None:
                 raise StoreError(f"no parent message stored for {key}")
             self._transport.post_reply(
-                self._settings.channel, parent, text, broadcast=broadcast, deadline=deadline
+                self._settings.channel, parent, reply, broadcast=broadcast, deadline=deadline
             )
             state = self._store.save(
                 key, SentState(key, watermark=wm, sent_keys=frozenset({reply_key}))
@@ -180,11 +195,11 @@ class Engine:
             self._store.save(key, SentState(key, watermark=wm))
         return HandleResult.SENT
 
-    def _post_parent(
-        self, view: ProcessView, messages: MessageSet, deadline: float
-    ) -> SentState | None:
-        """Post a parent. If parallel events posted too, the lowest Slack ts wins (contract D2)."""
-        key, wm, text = view.key, view.watermark, messages.parent.text
+    def _post_parent(self, key: str, text: str, wm: Watermark, deadline: float) -> SentState | None:
+        """Post a parent. If parallel events posted too, the lowest Slack ts wins (contract D2).
+
+        Returns None when a newer render owns the parent (YIELDED).
+        """
         mine = self._transport.post_parent(
             self._settings.channel, text, parent_payload(key, wm), deadline=deadline
         )
@@ -206,7 +221,7 @@ class Engine:
         winner = state.parent_ref
         if winner is None or winner == mine:
             return state
-        log.info("chappe: a parallel event posted the parent first; using %s", winner)
+        log.info("chappe: a parallel event posted the parent of %s first; using %s", key, winner)
         self._metric("chappe.duplicate_parent")
         if state.watermark is not None and state.watermark.newer_than(wm):
             return None
@@ -214,20 +229,29 @@ class Engine:
 
     def _write_parent(
         self, key: str, ts: str, text: str, wm: Watermark, deadline: float
-    ) -> SentState:
+    ) -> SentState | None:
+        """Edit the parent `ts`. Returns None when a newer render owns a re-posted parent."""
         payload = parent_payload(key, wm)
         try:
             self._transport.update_parent(
                 self._settings.channel, ts, text, payload, deadline=deadline
             )
         except TransportError as exc:
-            current = self._store.load(key) if exc.code == MESSAGE_NOT_FOUND else None
-            if current is None or current.parent_ref is None or current.parent_ref == ts:
+            if exc.code != MESSAGE_NOT_FOUND:
                 raise
-            ts = current.parent_ref  # a lower-ts parent won meanwhile and ours was deleted
-            self._transport.update_parent(
-                self._settings.channel, ts, text, payload, deadline=deadline
-            )
+            current = self._store.load(key)
+            if current is None:
+                raise
+            if current.parent_ref == ts:
+                # deleted by hand (spec 9.2): clear it so it never wins again, then use a live
+                # duplicate if one is left, else post a new parent
+                log.warning("chappe: the parent %s of %s was deleted; replacing it", ts, key)
+                self._metric("chappe.parent_replaced")
+                current = self._store.save(key, SentState(key, cleared_parents=frozenset({ts})))
+            if current.parent_ref is None:
+                return self._post_parent(key, text, wm, deadline)
+            # a lower-ts parent won meanwhile and ours was deleted, or a duplicate took over
+            return self._write_parent(key, current.parent_ref, text, wm, deadline)
         return self._store.save(
             key, SentState(key, parent_ref=ts, parent_text=text, watermark=wm, parent_written=wm)
         )
@@ -242,8 +266,10 @@ class Engine:
                 self._transport.delete(self._settings.channel, ts, deadline=deadline)
             except TransportError as exc:
                 log.warning(
-                    "chappe: could not delete duplicate parent %s (%s); the next event retries",
+                    "chappe: could not delete duplicate parent %s of %s (%s); "
+                    "the next event retries",
                     ts,
+                    key,
                     exc.code,
                 )
                 continue

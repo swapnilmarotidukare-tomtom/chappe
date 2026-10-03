@@ -78,14 +78,14 @@ def _newer(stored: Watermark | None, new: Watermark | None) -> Watermark | None:
 def merge_sent(stored: SentState | None, new: SentState) -> SentState:
     """Merge a state about to be saved into the stored one (contract D1/D2). Pure."""
     base = stored if stored is not None else new
-    candidates = {ref for ref in (base.parent_ref, new.parent_ref) if ref is not None}
-    parent_ref = min(candidates, key=slack_ts_key) if candidates else None
     cleared = base.cleared_parents | new.cleared_parents
-    stale = frozenset(
-        ts
-        for ts in base.stale_parents | new.stale_parents | candidates
-        if ts != parent_ref and ts not in cleared
-    )
+    # Every parent still in Slack is a candidate; the lowest ts wins (D2). A cleared (deleted)
+    # parent never is, so when the canonical parent is deleted a live duplicate or a new post
+    # takes over (spec 9.2).
+    refs = {ref for ref in (base.parent_ref, new.parent_ref) if ref is not None}
+    candidates = (refs | base.stale_parents | new.stale_parents) - cleared
+    parent_ref = min(candidates, key=slack_ts_key) if candidates else None
+    stale = frozenset(candidates - {parent_ref})
     last_write = new if new.parent_written is not None else base
     return SentState(
         process_key=new.process_key,
