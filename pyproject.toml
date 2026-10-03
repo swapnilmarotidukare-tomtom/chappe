@@ -75,3 +75,8 @@ forbidden_modules = [
   "chappe.stores",
   "chappe.themes",
 ]
+
+[[tool.importlinter.contracts]]
+name = "adapters do not import each other (spec 12.1)"
+type = "independence"
+modules = ["chappe.stores", "chappe.transports"]
