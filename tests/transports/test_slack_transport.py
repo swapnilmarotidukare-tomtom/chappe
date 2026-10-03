@@ -69,9 +69,10 @@ def test_retryable_errors_are_retried_honouring_retry_after() -> None:
 def test_without_retry_after_the_backoff_starts_at_half_a_second() -> None:
     clock = Clock()
     api = FakeSlackApi()
-    api.fail_next(TransportError("internal_error", retryable=True))
     transport = SlackTransport(api, clock=clock, sleep=clock.sleep)
-    transport.post_parent(CHANNEL, "hello", META, deadline=10)
+    parent = transport.post_parent(CHANNEL, "hello", META, deadline=10)
+    api.fail_next(TransportError("internal_error", retryable=True))
+    transport.update_parent(CHANNEL, parent, "again", META, deadline=10)
     assert clock.now == 0.5
 
 
@@ -105,3 +106,60 @@ def test_slack_errors_are_classified() -> None:
     assert transport_error("internal_error", status=200, headers={}).retryable
     assert transport_error("unknown_error", status=503, headers={}).retryable
     assert not transport_error("not_in_channel", status=200, headers={}).retryable
+
+
+def test_a_post_is_not_retried_after_an_ambiguous_error() -> None:
+    for code in ("internal_error", "request_timeout", "network_error"):
+        clock = Clock()
+        api = FakeSlackApi()
+        api.fail_next(TransportError(code, retryable=True))
+        transport = SlackTransport(api, clock=clock, sleep=clock.sleep)
+        with pytest.raises(TransportError, match=code):
+            transport.post_parent(CHANNEL, "hello", META, deadline=10)
+        assert clock.now == 0
+        assert len([c for c in api.calls if c[0] == "post"]) == 1
+
+    api = FakeSlackApi()
+    parent = api.post(CHANNEL, "p")
+    api.fail_next(TransportError("internal_error", retryable=True))
+    with pytest.raises(TransportError):
+        SlackTransport(api).post_reply(CHANNEL, parent, "r", broadcast=False, deadline=10)
+    assert api.replies(CHANNEL, parent) == []
+
+
+def test_a_post_is_retried_when_rate_limited() -> None:
+    clock = Clock()
+    api = FakeSlackApi()
+    parent = api.post(CHANNEL, "p")
+    api.fail_next(TransportError("ratelimited", retryable=True, retry_after=2))
+    transport = SlackTransport(api, clock=clock, sleep=clock.sleep)
+    transport.post_reply(CHANNEL, parent, "r", broadcast=False, deadline=10)
+    assert clock.now == 2
+    assert len(api.replies(CHANNEL, parent)) == 1
+
+
+def test_update_still_retries_ambiguous_errors() -> None:
+    clock = Clock()
+    api = FakeSlackApi()
+    transport = SlackTransport(api, clock=clock, sleep=clock.sleep)
+    parent = transport.post_parent(CHANNEL, "v1", META, deadline=10)
+    api.fail_next(TransportError("internal_error", retryable=True))
+    transport.update_parent(CHANNEL, parent, "v2", META, deadline=10)
+    assert clock.now == 0.5
+    message = api.message(CHANNEL, parent)
+    assert message is not None and message.text == "v2"
+
+
+def test_retry_after_is_clamped_and_non_finite_ignored() -> None:
+    assert (
+        transport_error("ratelimited", status=429, headers={"Retry-After": "-5"}).retry_after == 0
+    )
+    assert (
+        transport_error("ratelimited", status=429, headers={"Retry-After": "nan"}).retry_after
+        is None
+    )
+    assert (
+        transport_error("ratelimited", status=429, headers={"Retry-After": "inf"}).retry_after
+        is None
+    )
+    assert transport_error("whatever", status=429, headers={}).code == "ratelimited"

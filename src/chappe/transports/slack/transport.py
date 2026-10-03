@@ -8,7 +8,12 @@ from collections.abc import Callable, Mapping
 from typing import Any, TypeVar
 
 from chappe.core.errors import TransportError
-from chappe.transports.slack.api import MESSAGE_NOT_FOUND, SlackApi, call_with_retry
+from chappe.transports.slack.api import (
+    MESSAGE_NOT_FOUND,
+    SlackApi,
+    call_with_retry,
+    is_rate_limited,
+)
 from chappe.transports.slack.formatter import SlackFormatter
 
 T = TypeVar("T")
@@ -42,11 +47,17 @@ class SlackTransport:
     def _retry(self, fn: Callable[[], T], deadline: float) -> T:
         return call_with_retry(fn, deadline=deadline, clock=self._clock, sleep=self._sleep)
 
+    def _retry_post(self, fn: Callable[[], T], deadline: float) -> T:
+        """Posts are not idempotent: retry only when Slack certainly did not post."""
+        return call_with_retry(
+            fn, deadline=deadline, clock=self._clock, sleep=self._sleep, retry_on=is_rate_limited
+        )
+
     def post_parent(
         self, channel: str, text: str, metadata: Mapping[str, Any] | None, *, deadline: float
     ) -> str:
         envelope = _envelope(metadata)
-        return self._retry(lambda: self._api.post(channel, text, metadata=envelope), deadline)
+        return self._retry_post(lambda: self._api.post(channel, text, metadata=envelope), deadline)
 
     def update_parent(
         self,
@@ -63,7 +74,7 @@ class SlackTransport:
     def post_reply(
         self, channel: str, parent_ts: str, text: str, *, broadcast: bool, deadline: float
     ) -> str:
-        return self._retry(
+        return self._retry_post(
             lambda: self._api.post(channel, text, thread_ts=parent_ts, broadcast=broadcast),
             deadline,
         )

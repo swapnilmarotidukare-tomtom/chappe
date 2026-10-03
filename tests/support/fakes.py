@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -72,7 +73,7 @@ class FakeSlackApi:
         self._seq += 1
         ts = f"1790000000.{self._seq:06d}"
         self._messages.setdefault(channel, {})[ts] = FakeMessage(
-            ts, text, thread_ts, metadata, broadcast
+            ts, text, thread_ts, copy.deepcopy(metadata), broadcast
         )
         return ts
 
@@ -87,7 +88,7 @@ class FakeSlackApi:
             ts,
             text,
             old.thread_ts,
-            metadata if metadata is not None else old.metadata,
+            copy.deepcopy(metadata) if metadata is not None else old.metadata,
             old.broadcast,
         )
 
