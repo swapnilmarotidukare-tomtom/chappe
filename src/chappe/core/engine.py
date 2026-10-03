@@ -103,11 +103,15 @@ class Engine:
                 getattr(event, "run_id", "?"),
             )
             result = HandleResult.ERROR
-        try:
-            self._metrics(f"chappe.events.{result.value}")
-        except Exception:
-            log.exception("chappe: metrics hook failed")
+        self._metric(f"chappe.events.{result.value}")
         return result
+
+    def _metric(self, name: str) -> None:
+        """Count `name`. A failing metrics hook is logged and never changes what Chappe does."""
+        try:
+            self._metrics(name)
+        except Exception:
+            log.exception("chappe: metrics hook failed (%s)", name)
 
     def _handle(self, event: ChappeEvent, final: bool, deadline: float) -> HandleResult:
         view = self._source.snapshot(event)
@@ -137,7 +141,7 @@ class Engine:
             return self._theme.render(view, self._ctx)
         except Exception:
             log.exception("chappe: theme %r failed; using the plain theme", self._theme.name)
-            self._metrics("chappe.theme_fallback")
+            self._metric("chappe.theme_fallback")
             return self._fallback.render(view, self._ctx)
 
     def _apply(
@@ -203,7 +207,7 @@ class Engine:
         if winner is None or winner == mine:
             return state
         log.info("chappe: a parallel event posted the parent first; using %s", winner)
-        self._metrics("chappe.duplicate_parent")
+        self._metric("chappe.duplicate_parent")
         if state.watermark is not None and state.watermark.newer_than(wm):
             return None
         return self._write_parent(key, winner, text, wm, deadline)
@@ -246,7 +250,7 @@ class Engine:
             cleared.add(ts)
         if not cleared:
             return state
-        self._metrics("chappe.duplicate_parent_deleted")
+        self._metric("chappe.duplicate_parent_deleted")
         return self._store.save(key, SentState(key, cleared_parents=frozenset(cleared)))
 
     def _final_check(self, view: ProcessView, messages: MessageSet, deadline: float) -> None:
@@ -254,7 +258,11 @@ class Engine:
 
         Rewrite the parent if a late writer edited it after us.
         """
-        self._sleep(self._settings.final_check_delay_s)
+        left = deadline - self._clock()
+        if left <= 0:
+            log.warning("chappe: no time left to read back the final message for %s", view.key)
+            return
+        self._sleep(min(self._settings.final_check_delay_s, left))
         loaded = self._store.load(view.key)
         if loaded is None or loaded.parent_ref is None:
             return
@@ -264,12 +272,12 @@ class Engine:
         ):
             return
         log.warning("chappe: repairing a late overwrite of the final message for %s", view.key)
-        self._metrics("chappe.final_repaired")
+        self._metric("chappe.final_repaired")
         self._write_parent(view.key, loaded.parent_ref, text, view.watermark, deadline)
 
     def _mark_degraded(self, view: ProcessView, exc: TransportError) -> None:
         log.error("chappe: Slack refused (%s); stopping for process %s", exc.code, view.key)
-        self._metrics("chappe.degraded")
+        self._metric("chappe.degraded")
         try:
             self._store.save(view.key, SentState(view.key, degraded=True))
         except Exception:

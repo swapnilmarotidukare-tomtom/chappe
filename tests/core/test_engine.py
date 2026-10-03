@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import replace
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 
@@ -17,7 +18,7 @@ from chappe.core.render import RenderContext
 from chappe.core.view import ProcessView
 from chappe.stores.airflow_variable import encode, key_for
 from chappe.themes.builtin.plain import PlainTheme
-from chappe.transports.slack.transport import EVENT_TYPE
+from chappe.transports.slack.transport import EVENT_TYPE, SlackTransport
 from tests.support.engine import CHANNEL, CTX, KEY, PreparedSource, render, stage, store_for, writer
 from tests.support.fakes import FakeSlackApi, FakeVariables
 
@@ -162,7 +163,6 @@ def test_parallel_writers_both_keep_their_thread_entries() -> None:
     saved = store_for(variables).load(KEY)
     assert saved is not None and expected <= saved.sent_keys
 
-    api.before_post = None
     writer(api, variables, theme=theme).handle(stage(S, S, S, S))
     (parent,) = api.top_level(CHANNEL)
     replies = [m.text for m in api.replies(CHANNEL, parent.ts)]
@@ -285,3 +285,105 @@ def test_an_ambiguous_post_failure_is_left_to_the_next_event(
     assert w.handle(stage(S, R, P)) is HandleResult.SENT  # the next event posts
     (parent,) = api.top_level(CHANNEL)
     assert parent.text == render(stage(S, R, P)).parent.text
+
+
+def raising_metrics(name: str) -> None:
+    raise RuntimeError("statsd down")
+
+
+class DeadlineTransport(SlackTransport):
+    """Records the deadline of every parent post and update."""
+
+    def __init__(self, api: FakeSlackApi) -> None:
+        super().__init__(api)
+        self.deadlines: list[float] = []
+
+    def post_parent(
+        self, channel: str, text: str, metadata: Mapping[str, Any] | None, *, deadline: float
+    ) -> str:
+        self.deadlines.append(deadline)
+        return super().post_parent(channel, text, metadata, deadline=deadline)
+
+    def update_parent(
+        self,
+        channel: str,
+        ts: str,
+        text: str,
+        metadata: Mapping[str, Any] | None,
+        *,
+        deadline: float,
+    ) -> None:
+        self.deadlines.append(deadline)
+        super().update_parent(channel, ts, text, metadata, deadline=deadline)
+
+
+def test_a_raising_metrics_hook_still_falls_back_to_plain(caplog: pytest.LogCaptureFixture) -> None:
+    api, variables = FakeSlackApi(), FakeVariables()
+    view = stage(S, R, P)
+    w = writer(api, variables, theme=BrokenTheme(), metrics=raising_metrics)
+    with caplog.at_level(logging.ERROR, logger="chappe"):
+        assert w.handle(view) is HandleResult.SENT
+    assert api.top_level(CHANNEL)[0].text == render(view).parent.text
+    assert "chappe: metrics hook failed" in caplog.text
+
+
+def test_a_raising_metrics_hook_still_records_degraded() -> None:
+    api, variables = FakeSlackApi(), FakeVariables()
+    w = writer(api, variables, metrics=raising_metrics)
+    api.fail_next(TransportError("not_in_channel", retryable=False))
+    assert w.handle(stage(R, P, P)) is HandleResult.DEGRADED
+    saved = store_for(variables).load(KEY)
+    assert saved is not None and saved.degraded
+
+
+def test_final_read_back_waits_only_for_the_time_left() -> None:
+    now = [100.0]
+    sleeps: list[float] = []
+    api, variables = FakeSlackApi(), FakeVariables()
+    w = writer(api, variables, clock=lambda: now[0], sleep=sleeps.append)
+    w.handle(stage(S, R, P))
+    final = stage(S, S, S, finished=ProcessState.SUCCEEDED)
+
+    def time_passes(channel: str, thread_ts: str | None) -> None:
+        now[0] = 129.5  # the final budget (30s from 100.0) has 0.5s left
+
+    api.before_post = time_passes
+    assert w.handle(final, EventKind.RUN_FINISHED) is HandleResult.SENT
+    assert sleeps == [0.5]
+
+
+def test_final_read_back_is_skipped_when_the_budget_is_spent() -> None:
+    now = [100.0]
+    sleeps: list[float] = []
+    reads: list[int] = []
+    reads_at_last_write: list[int] = []
+    api, variables = FakeSlackApi(), FakeVariables()
+
+    def count_read() -> None:
+        reads.append(1)
+
+    w = writer(api, variables, clock=lambda: now[0], sleep=sleeps.append, before_read=count_read)
+    w.handle(stage(S, R, P))
+
+    def time_runs_out(channel: str, thread_ts: str | None) -> None:
+        now[0] = 131.0  # past the final budget (30s from 100.0)
+
+    def note_write(key: str, value: str) -> None:
+        reads_at_last_write[:] = [len(reads)]
+
+    api.before_post = time_runs_out
+    variables.before_set = note_write
+    final = stage(S, S, S, finished=ProcessState.SUCCEEDED)
+    assert w.handle(final, EventKind.RUN_FINISHED) is HandleResult.SENT
+    assert sleeps == []
+    assert reads_at_last_write == [len(reads)]  # no read-back after the last write
+
+
+def test_run_finished_gets_the_final_budget_and_other_events_the_event_budget() -> None:
+    api, variables = FakeSlackApi(), FakeVariables()
+    transport = DeadlineTransport(api)
+    w = writer(api, variables, clock=lambda: 1000.0, transport=transport)
+    w.handle(stage(R, P, P), EventKind.STEP_STARTED)
+    w.handle(stage(S, R, P), EventKind.STEP_FINISHED)
+    w.handle(stage(S, S, S, finished=ProcessState.SUCCEEDED), EventKind.RUN_FINISHED)
+    assert transport.deadlines == [1010.0, 1010.0, 1030.0]

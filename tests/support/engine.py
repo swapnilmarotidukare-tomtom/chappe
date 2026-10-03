@@ -13,6 +13,7 @@ from chappe.core.messages import MessageSet
 from chappe.core.model import ProcessState, StepState
 from chappe.core.view import ProcessView
 from chappe.ports.theme import Theme
+from chappe.ports.transport import Transport
 from chappe.stores.airflow_variable import AirflowVariableStore
 from chappe.themes.builtin.plain import PlainTheme
 from chappe.transports.slack.transport import SlackTransport
@@ -57,6 +58,14 @@ def _no_sleep(seconds: float) -> None:
     return None
 
 
+def _no_metrics(name: str) -> None:
+    return None
+
+
+def _zero_clock() -> float:
+    return 0.0
+
+
 def store_for(
     variables: FakeVariables, before_read: Callable[[], None] = _nothing
 ) -> AirflowVariableStore:
@@ -99,6 +108,9 @@ def writer(
     sleep: Callable[[float], None] = _no_sleep,
     before_read: Callable[[], None] = _nothing,
     enabled: bool = True,
+    metrics: Callable[[str], None] = _no_metrics,
+    clock: Callable[[], float] = _zero_clock,
+    transport: Transport | None = None,
 ) -> Writer:
     prepared = source if source is not None else PreparedSource()
     engine = Engine(
@@ -106,10 +118,12 @@ def writer(
         theme=theme if theme is not None else PlainTheme(),
         fallback_theme=PlainTheme(),
         context=CTX,
-        transport=SlackTransport(api),
+        transport=transport if transport is not None else SlackTransport(api),
         store=store_for(variables, before_read),
         settings=EngineSettings(channel=CHANNEL),
         enabled=lambda: enabled,
+        metrics=metrics,
+        clock=clock,
         sleep=sleep,
     )
     return Writer(engine, prepared)

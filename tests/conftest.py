@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 
 import pytest
+from hypothesis import settings
+
+# CI runs the same examples every time: no randomness, no example database, no deadline.
+settings.register_profile("ci", derandomize=True, database=None, deadline=None)
+if os.environ.get("HYPOTHESIS_PROFILE"):
+    settings.load_profile(os.environ["HYPOTHESIS_PROFILE"])
+elif os.environ.get("CI"):
+    settings.load_profile("ci")
 
 # Rich assertion diffs inside the helpers in tests/support.
 pytest.register_assert_rewrite("tests.support")
