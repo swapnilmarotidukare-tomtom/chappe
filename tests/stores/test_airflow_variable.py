@@ -83,14 +83,16 @@ def test_a_variable_of_another_process_is_ignored(caplog: pytest.LogCaptureFixtu
 
 
 @pytest.mark.parametrize("raw", ["{not json", "[]", '{"v": 99}', '{"v": 1, "process_key": "x"}'])
-def test_an_unreadable_variable_is_ignored_and_logged(
-    raw: str, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_an_unreadable_variable_is_a_store_error(raw: str) -> None:
+    """Spec 9.2 "Store unreadable -> skip sending": without the state a post risks a duplicate."""
     variables = FakeVariables()
     variables.data[key_for(PK)] = raw
-    with caplog.at_level(logging.WARNING, logger=LOGGER):
-        assert store_on(variables).load(PK) is None
-    assert key_for(PK) in caplog.text
+    store = store_on(variables)
+    with pytest.raises(StoreError, match=re.escape(key_for(PK))):
+        store.load(PK)
+    with pytest.raises(StoreError):
+        store.save(PK, SentState(PK, parent_ref=LOW))  # never clobbers what it cannot read
+    assert variables.data[key_for(PK)] == raw
 
 
 def test_variable_errors_become_store_errors() -> None:

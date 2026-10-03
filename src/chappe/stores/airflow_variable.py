@@ -127,6 +127,10 @@ class AirflowVariableStore:
         self._now = now
 
     def load(self, process_key: str) -> SentState | None:
+        """The stored state, or None when there is no Variable yet.
+
+        Raises StoreError when the Variable cannot be read or decoded (another payload version).
+        """
         key = key_for(process_key)
         try:
             raw = self._get(key)
@@ -137,9 +141,11 @@ class AirflowVariableStore:
         try:
             state = decode(raw)
         except _DECODE_ERRORS as exc:
-            log.warning("chappe: ignoring unreadable Variable %s: %s", key, exc)
-            return None
+            # Spec 9.2 "Store unreadable -> skip sending": without the state, a post risks a
+            # duplicate parent, and a save would overwrite what is there.
+            raise StoreError(f"cannot read Airflow Variable {key}: {exc!r}") from exc
         if state.process_key != process_key:
+            # another run whose key hashes the same: treat as absent (a 64-bit collision)
             log.warning(
                 "chappe: Variable %s holds process %r, not %r; ignoring it",
                 key,

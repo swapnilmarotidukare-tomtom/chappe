@@ -8,7 +8,7 @@ from chappe.core.reconcile import SentState
 
 class Store(Protocol):
     def load(self, process_key: str) -> SentState | None:
-        """The stored state, or None when nothing is stored for this process."""
+        """The stored state, or None when nothing is stored. Raises StoreError when unreadable."""
         ...
 
     def save(self, process_key: str, state: SentState) -> SentState:
