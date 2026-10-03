@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 
 from chappe.core.messages import Alert, MessageSet, ThreadEntry
 from chappe.core.view import Watermark
+
+_SLACK_TS = re.compile(r"(\d+)(?:\.(\d+))?", re.ASCII)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,4 +53,49 @@ def plan_sends(messages: MessageSet, sent: SentState | None) -> SendPlan:
         update_parent=has_parent and text_changed,
         entries=tuple(e for e in messages.thread if e.key not in known),
         alerts=tuple(a for a in messages.alerts if a.key not in known),
+    )
+
+
+def slack_ts_key(ts: str) -> tuple[int, int]:
+    """Order Slack timestamps numerically: ``"1791050263.984869"`` -> ``(1791050263, 984869)``.
+
+    Slack sends six fractional digits. Shorter fractions are right-padded and longer ones are cut to
+    microseconds, so ``"1.5"`` and ``"1.500000"`` compare equal.
+    """
+    match = _SLACK_TS.fullmatch(ts.strip())
+    if match is None:
+        raise ValueError(f"not a Slack ts: {ts!r}")
+    seconds, fraction = match.group(1), match.group(2) or ""
+    return int(seconds), int((fraction + "000000")[:6])
+
+
+def _newer(stored: Watermark | None, new: Watermark | None) -> Watermark | None:
+    if new is not None and new.newer_than(stored):
+        return new
+    return stored
+
+
+def merge_sent(stored: SentState | None, new: SentState) -> SentState:
+    """Merge a state about to be saved into the stored one (contract D1/D2). Pure."""
+    base = stored if stored is not None else new
+    candidates = {ref for ref in (base.parent_ref, new.parent_ref) if ref is not None}
+    parent_ref = min(candidates, key=slack_ts_key) if candidates else None
+    cleared = base.cleared_parents | new.cleared_parents
+    stale = frozenset(
+        ts
+        for ts in base.stale_parents | new.stale_parents | candidates
+        if ts != parent_ref and ts not in cleared
+    )
+    last_write = new if new.parent_written is not None else base
+    return SentState(
+        process_key=new.process_key,
+        parent_ref=parent_ref,
+        parent_text=last_write.parent_text,
+        watermark=_newer(base.watermark, new.watermark),
+        parent_written=last_write.parent_written,
+        sent_keys=base.sent_keys | new.sent_keys,
+        stale_parents=stale,
+        cleared_parents=cleared,
+        degraded=base.degraded or new.degraded,
+        updated_at=new.updated_at,
     )
