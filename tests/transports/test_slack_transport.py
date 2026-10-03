@@ -1,0 +1,107 @@
+# tests/transports/test_slack_transport.py
+import pytest
+
+from chappe.core.errors import TransportError
+from chappe.transports.slack.api import MESSAGE_NOT_FOUND, call_with_retry, transport_error
+from chappe.transports.slack.transport import EVENT_TYPE, SlackTransport
+from tests.support.fakes import FakeSlackApi
+
+CHANNEL = "C0123456789"
+META = {"process_key": "orders/manual__1"}
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def test_parent_reply_and_delete() -> None:
+    api = FakeSlackApi()
+    transport = SlackTransport(api)
+    parent = transport.post_parent(CHANNEL, "hello", META, deadline=10)
+    reply = transport.post_reply(CHANNEL, parent, "step done", broadcast=True, deadline=10)
+    assert [m.text for m in api.top_level(CHANNEL)] == ["hello"]
+    assert [(m.text, m.broadcast) for m in api.replies(CHANNEL, parent)] == [("step done", True)]
+    transport.delete(CHANNEL, reply, deadline=10)
+    assert api.replies(CHANNEL, parent) == []
+    assert api.deleted == [(CHANNEL, reply)]
+
+
+def test_parent_carries_chappe_metadata_on_post_and_update() -> None:
+    api = FakeSlackApi()
+    transport = SlackTransport(api)
+    parent = transport.post_parent(CHANNEL, "v1", META, deadline=10)
+    message = api.message(CHANNEL, parent)
+    assert message is not None
+    assert message.metadata == {"event_type": EVENT_TYPE, "event_payload": META}
+    transport.update_parent(CHANNEL, parent, "v2", {**META, "n": 2}, deadline=10)
+    message = api.message(CHANNEL, parent)
+    assert message is not None and message.text == "v2"
+    assert message.metadata == {"event_type": "chappe_process", "event_payload": {**META, "n": 2}}
+
+
+def test_deleting_a_message_that_is_already_gone_succeeds() -> None:
+    api = FakeSlackApi()
+    transport = SlackTransport(api)
+    parent = transport.post_parent(CHANNEL, "hello", META, deadline=10)
+    transport.delete(CHANNEL, parent, deadline=10)
+    transport.delete(CHANNEL, parent, deadline=10)  # Slack answers message_not_found
+    assert api.deleted == [(CHANNEL, parent)]
+    assert api.message(CHANNEL, parent) is None
+
+
+def test_retryable_errors_are_retried_honouring_retry_after() -> None:
+    clock = Clock()
+    api = FakeSlackApi()
+    api.fail_next(TransportError("ratelimited", retryable=True, retry_after=3))
+    transport = SlackTransport(api, clock=clock, sleep=clock.sleep)
+    transport.post_parent(CHANNEL, "hello", META, deadline=10)
+    assert clock.now == 3
+    assert len(api.top_level(CHANNEL)) == 1
+
+
+def test_without_retry_after_the_backoff_starts_at_half_a_second() -> None:
+    clock = Clock()
+    api = FakeSlackApi()
+    api.fail_next(TransportError("internal_error", retryable=True))
+    transport = SlackTransport(api, clock=clock, sleep=clock.sleep)
+    transport.post_parent(CHANNEL, "hello", META, deadline=10)
+    assert clock.now == 0.5
+
+
+def test_retry_gives_up_at_the_deadline() -> None:
+    clock = Clock()
+    calls: list[int] = []
+
+    def always_limited() -> None:
+        calls.append(1)
+        raise TransportError("ratelimited", retryable=True, retry_after=4)
+
+    with pytest.raises(TransportError):
+        call_with_retry(always_limited, deadline=10, clock=clock, sleep=clock.sleep)
+    assert len(calls) == 3  # at t=0, 4, 8; the next wait would pass the deadline
+
+
+def test_permanent_errors_are_not_retried() -> None:
+    api = FakeSlackApi()
+    api.fail_next(TransportError("not_in_channel", retryable=False))
+    with pytest.raises(TransportError, match="not_in_channel"):
+        SlackTransport(api).post_parent(CHANNEL, "hello", META, deadline=10)
+
+
+def test_slack_errors_are_classified() -> None:
+    limited = transport_error("ratelimited", status=429, headers={"Retry-After": "3"})
+    assert limited.retryable and limited.retry_after == 3.0
+    lower = transport_error("ratelimited", status=429, headers={"retry-after": "7"})
+    assert lower.retry_after == 7.0
+    gone = transport_error("message_not_found", status=200, headers={})
+    assert gone.code == MESSAGE_NOT_FOUND and not gone.retryable
+    assert transport_error("internal_error", status=200, headers={}).retryable
+    assert transport_error("unknown_error", status=503, headers={}).retryable
+    assert not transport_error("not_in_channel", status=200, headers={}).retryable
