@@ -1,0 +1,8 @@
+=== parent ===
+*orders 2026.10.1* · :x: Failed · 2/3 steps · <https://airflow.example/dags/orders/runs/run_1|Airflow run>
+=== fallback ===
+orders 2026.10.1: Failed (2/3)
+=== thread ===
+[process:failed] (broadcast) :x: Failed · *orders 2026.10.1* · 3h 34m
+=== alerts ===
+[alert:process:failed] <!subteam^S0TEST> :x: *orders 2026.10.1*: Geometry
