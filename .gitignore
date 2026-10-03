@@ -1,3 +1,11 @@
 .DS_Store
 /spike/
 .env
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/

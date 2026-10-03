@@ -1,0 +1,1 @@
+"""Interfaces that adapters implement."""
