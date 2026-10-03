@@ -14,7 +14,9 @@ class SlackFormatter:
         return f"_{self.escape(text)}_"
 
     def link(self, url: str, label: str) -> str:
-        safe_url = url.replace("|", "%7C").replace(">", "%3E")
+        safe_url = (
+            url.replace("&", "&amp;").replace("<", "%3C").replace(">", "%3E").replace("|", "%7C")
+        )
         return f"<{safe_url}|{self.escape(label)}>"
 
     def mention(self, target: str) -> str:

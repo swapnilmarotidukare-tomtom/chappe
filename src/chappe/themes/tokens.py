@@ -29,6 +29,9 @@ def resolve_tokens(theme_name: str, override: Mapping[str, Any] | None) -> Token
         raise ChappeConfigError(
             f"unknown token section(s) {sorted(unknown)}; expected {list(_SECTIONS)}"
         )
+    for section in _SECTIONS:
+        if section in override and not isinstance(override[section], Mapping):
+            raise ChappeConfigError(f"tokens.{section} must be a mapping")
     data = _builtin(base_name)
     for section in ("icons", "labels"):
         for key in override.get(section, {}):

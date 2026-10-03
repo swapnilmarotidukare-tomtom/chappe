@@ -16,3 +16,7 @@ def test_link_escapes_label_and_url_separators() -> None:
 def test_mentions_and_icons_pass_through() -> None:
     assert fmt.mention("<!subteam^S0123>") == "<!subteam^S0123>"
     assert fmt.icon(":x:") == ":x:"
+
+
+def test_link_escapes_ampersand_and_angle_brackets_in_url() -> None:
+    assert fmt.link("http://a<b&c", "x") == "<http://a%3Cb&amp;c|x>"

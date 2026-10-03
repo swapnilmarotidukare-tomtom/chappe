@@ -25,7 +25,7 @@ def test_override_extends_and_replaces_keys() -> None:
 
 
 def test_unknown_token_keys_are_rejected() -> None:
-    with pytest.raises(ChappeConfigError, match=r"icons.runing"):
+    with pytest.raises(ChappeConfigError, match=r"icons\.runing"):
         resolve_tokens("thread", {"icons": {"runing": ":x:"}})
     with pytest.raises(ChappeConfigError, match="colour"):
         resolve_tokens("thread", {"colour": {}})
@@ -34,3 +34,10 @@ def test_unknown_token_keys_are_rejected() -> None:
 def test_unknown_base_theme_is_rejected() -> None:
     with pytest.raises(ChappeConfigError, match="no built-in tokens"):
         resolve_tokens("neon", None)
+
+
+def test_non_mapping_sections_are_rejected() -> None:
+    with pytest.raises(ChappeConfigError, match="icons"):
+        resolve_tokens("thread", {"icons": None})
+    with pytest.raises(ChappeConfigError, match="labels"):
+        resolve_tokens("thread", {"labels": ["x"]})
