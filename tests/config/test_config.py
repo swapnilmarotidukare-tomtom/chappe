@@ -147,3 +147,44 @@ def test_kill_switch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert chappe_enabled(settings)
     monkeypatch.setenv("CHAPPE_ENABLED", "false")
     assert not chappe_enabled(settings)
+
+
+@pytest.mark.parametrize("zone", ["America", "Europe/", "../etc/passwd"])
+def test_a_timezone_that_is_a_directory_or_path_is_a_config_error(
+    tmp_path: Path, zone: str
+) -> None:
+    with pytest.raises(ChappeConfigError, match="unknown timezone"):
+        load_settings(write(tmp_path, with_defaults(f"    time: {{timezone: '{zone}'}}\n")))
+
+
+def test_a_file_that_is_not_utf8_is_a_config_error(tmp_path: Path) -> None:
+    path = tmp_path / "chappe.yaml"
+    path.write_bytes(VALID.encode("utf-8") + b"# caf\xe9\n")
+    with pytest.raises(ChappeConfigError, match="UTF-8"):
+        load_settings(path)
+
+
+def test_a_utf8_file_is_read_as_utf8_whatever_the_locale(tmp_path: Path) -> None:
+    path = tmp_path / "chappe.yaml"
+    path.write_bytes(VALID.replace("Orders", "Bestellungen · Übersicht").encode("utf-8"))
+    found = load_settings(path).process_for_dag("orders_pipeline")
+    assert found is not None and found[1].dags[0].section == "Bestellungen · Übersicht"
+
+
+@pytest.mark.parametrize("channel", ['"C0123456789\\n"', '"D0123456789\\n"'])
+def test_a_channel_id_with_a_trailing_newline_is_rejected(tmp_path: Path, channel: str) -> None:
+    with pytest.raises(ChappeConfigError, match="channel"):
+        load_settings(write(tmp_path, VALID.replace("C0123456789", channel)))
+
+
+def test_an_unknown_theme_is_rejected_at_load(tmp_path: Path) -> None:
+    """Spec 9.1: theme names and tokens are validated at load, for the runtime too."""
+    text = with_defaults("    theme: {name: neon}\n")
+    with pytest.raises(ChappeConfigError, match=r"defaults\.theme: unknown theme 'neon'"):
+        load_settings(write(tmp_path, text))
+
+
+def test_bad_token_overrides_are_rejected_at_load(tmp_path: Path) -> None:
+    text = VALID + "      theme: {name: plain, tokens: {colours: {}}}\n"
+    with pytest.raises(ChappeConfigError, match=r"processes\.orders\.theme: unknown token section"):
+        load_settings(write(tmp_path, text))

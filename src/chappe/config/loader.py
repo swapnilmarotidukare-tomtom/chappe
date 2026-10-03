@@ -8,6 +8,7 @@ import yaml
 from pydantic import ValidationError
 
 from chappe.config.models import ChappeSettings, ConfigFile
+from chappe.config.validate import validate_settings
 from chappe.core.errors import ChappeConfigError
 
 ENV_CONFIG = "CHAPPE_CONFIG"
@@ -20,18 +21,27 @@ def load_settings(path: str | Path | None = None) -> ChappeSettings:
         raise ChappeConfigError(f"no config file: pass a path or set {ENV_CONFIG}")
     file = Path(location)
     try:
-        data = yaml.safe_load(file.read_text())
+        data = yaml.safe_load(file.read_text(encoding="utf-8"))
     except OSError as exc:
         raise ChappeConfigError(f"{file}: cannot read ({exc.strerror})") from exc
+    except UnicodeDecodeError as exc:
+        raise ChappeConfigError(
+            f"{file}: not UTF-8 (byte {exc.start}: {exc.reason}); save the file as UTF-8"
+        ) from exc
     except yaml.YAMLError as exc:
         raise ChappeConfigError(f"{file}: invalid YAML ({exc})") from exc
     try:
-        return ConfigFile.model_validate(data).chappe
+        settings = ConfigFile.model_validate(data).chappe
     except ValidationError as exc:
         problems = "; ".join(
             f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in exc.errors()
         )
         raise ChappeConfigError(f"{file}: {problems}") from exc
+    try:
+        validate_settings(settings)
+    except ChappeConfigError as exc:
+        raise ChappeConfigError(f"{file}: {exc}") from exc
+    return settings
 
 
 def chappe_enabled(settings: ChappeSettings) -> bool:

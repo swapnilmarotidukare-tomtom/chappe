@@ -9,8 +9,9 @@ from jinja2 import TemplateSyntaxError
 from jinja2.sandbox import SandboxedEnvironment
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-CHANNEL_ID = re.compile(r"^[CG][A-Z0-9]{8,}$")
-DM_ID = re.compile(r"^D[A-Z0-9]{8,}$")
+# used with fullmatch: `$` would accept a trailing newline
+CHANNEL_ID = re.compile(r"[CG][A-Z0-9]{8,}")
+DM_ID = re.compile(r"D[A-Z0-9]{8,}")
 CHANNEL_HINT = (
     "use the Slack channel ID (it starts with C or G, for example C0123456789); "
     "open the channel, click its name and copy the ID from the bottom of the About panel"
@@ -45,7 +46,7 @@ class TimeConfig(_Model):
     def _known_timezone(cls, value: str) -> str:
         try:
             ZoneInfo(value)
-        except (ZoneInfoNotFoundError, ValueError) as exc:
+        except (ZoneInfoNotFoundError, ValueError, OSError) as exc:  # OSError: "America" is a dir
             raise ValueError(
                 f"unknown timezone {value!r}; use an IANA name such as Europe/Amsterdam"
             ) from exc
@@ -123,12 +124,12 @@ class ProcessConfig(_Model):
     @field_validator("channel")
     @classmethod
     def _channel_id(cls, value: str) -> str:
-        if DM_ID.match(value):
+        if DM_ID.fullmatch(value):
             raise ValueError(
                 f"{value!r} is a direct-message ID and Chappe posts to channels only; "
                 f"{CHANNEL_HINT}"
             )
-        if not CHANNEL_ID.match(value):
+        if not CHANNEL_ID.fullmatch(value):
             raise ValueError(f"{value!r} is not a channel ID; {CHANNEL_HINT}")
         return value
 
