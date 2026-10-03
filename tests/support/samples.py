@@ -104,7 +104,7 @@ class ProcessViewBuilder:
 S, P, R = StepState.SUCCEEDED, StepState.PENDING, StepState.RUNNING
 F, K = StepState.FAILED, StepState.SKIPPED
 OOM = "Executor ran out of memory after 3 retries"
-SECOND = "vs 3s nexventura 26400.000"
+SECOND = "Regression vs baseline 2026.10.0"
 LONG_STEP = "Generate & consolidate <aggregates> für Ünïcødé " + "x" * 150
 
 
