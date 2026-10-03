@@ -30,11 +30,16 @@ class FakeSlackApi:
         self._failures: list[TransportError] = []
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.deleted: list[tuple[str, str]] = []
+        self.timeouts: list[float] = []  # the per-request timeout of every call that passed one
         self.before_post: Callable[[str, str | None], None] | None = None
 
     def fail_next(self, error: TransportError) -> None:
         """The next call (of any method) raises `error`; queued errors fire in order."""
         self._failures.append(error)
+
+    def _note(self, timeout: float | None) -> None:
+        if timeout is not None:
+            self.timeouts.append(timeout)
 
     def _maybe_fail(self) -> None:
         if self._failures:
@@ -54,7 +59,9 @@ class FakeSlackApi:
         thread_ts: str | None = None,
         broadcast: bool = False,
         metadata: Mapping[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> str:
+        self._note(timeout)
         if self.before_post is not None:
             self.before_post(channel, thread_ts)
         self.calls.append(
@@ -78,8 +85,15 @@ class FakeSlackApi:
         return ts
 
     def update(
-        self, channel: str, ts: str, text: str, *, metadata: Mapping[str, Any] | None = None
+        self,
+        channel: str,
+        ts: str,
+        text: str,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> None:
+        self._note(timeout)
         call = {"channel": channel, "ts": ts, "text": text, "metadata": metadata}
         self.calls.append(("update", call))
         self._maybe_fail()
@@ -92,7 +106,8 @@ class FakeSlackApi:
             old.broadcast,
         )
 
-    def delete(self, channel: str, ts: str) -> None:
+    def delete(self, channel: str, ts: str, *, timeout: float | None = None) -> None:
+        self._note(timeout)
         self.calls.append(("delete", {"channel": channel, "ts": ts}))
         self._maybe_fail()
         self._existing(channel, ts)

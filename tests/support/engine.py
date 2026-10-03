@@ -118,7 +118,7 @@ def writer(
         theme=theme if theme is not None else PlainTheme(),
         fallback_theme=PlainTheme(),
         context=CTX,
-        transport=transport if transport is not None else SlackTransport(api),
+        transport=transport if transport is not None else SlackTransport(api, clock=clock),
         store=store_for(variables, before_read),
         settings=EngineSettings(channel=CHANNEL),
         enabled=lambda: enabled,

@@ -23,7 +23,7 @@ class Clock:
 
 def test_parent_reply_and_delete() -> None:
     api = FakeSlackApi()
-    transport = SlackTransport(api)
+    transport = SlackTransport(api, clock=Clock())
     parent = transport.post_parent(CHANNEL, "hello", META, deadline=10)
     reply = transport.post_reply(CHANNEL, parent, "step done", broadcast=True, deadline=10)
     assert [m.text for m in api.top_level(CHANNEL)] == ["hello"]
@@ -35,7 +35,7 @@ def test_parent_reply_and_delete() -> None:
 
 def test_parent_carries_chappe_metadata_on_post_and_update() -> None:
     api = FakeSlackApi()
-    transport = SlackTransport(api)
+    transport = SlackTransport(api, clock=Clock())
     parent = transport.post_parent(CHANNEL, "v1", META, deadline=10)
     message = api.message(CHANNEL, parent)
     assert message is not None
@@ -48,7 +48,7 @@ def test_parent_carries_chappe_metadata_on_post_and_update() -> None:
 
 def test_deleting_a_message_that_is_already_gone_succeeds() -> None:
     api = FakeSlackApi()
-    transport = SlackTransport(api)
+    transport = SlackTransport(api, clock=Clock())
     parent = transport.post_parent(CHANNEL, "hello", META, deadline=10)
     transport.delete(CHANNEL, parent, deadline=10)
     transport.delete(CHANNEL, parent, deadline=10)  # Slack answers message_not_found
@@ -93,7 +93,7 @@ def test_permanent_errors_are_not_retried() -> None:
     api = FakeSlackApi()
     api.fail_next(TransportError("not_in_channel", retryable=False))
     with pytest.raises(TransportError, match="not_in_channel"):
-        SlackTransport(api).post_parent(CHANNEL, "hello", META, deadline=10)
+        SlackTransport(api, clock=Clock()).post_parent(CHANNEL, "hello", META, deadline=10)
 
 
 def test_slack_errors_are_classified() -> None:
@@ -122,8 +122,10 @@ def test_a_post_is_not_retried_after_an_ambiguous_error() -> None:
     api = FakeSlackApi()
     parent = api.post(CHANNEL, "p")
     api.fail_next(TransportError("internal_error", retryable=True))
-    with pytest.raises(TransportError):
-        SlackTransport(api).post_reply(CHANNEL, parent, "r", broadcast=False, deadline=10)
+    with pytest.raises(TransportError, match="internal_error"):
+        SlackTransport(api, clock=Clock()).post_reply(
+            CHANNEL, parent, "r", broadcast=False, deadline=10
+        )
     assert api.replies(CHANNEL, parent) == []
 
 
@@ -163,3 +165,44 @@ def test_retry_after_is_clamped_and_non_finite_ignored() -> None:
         is None
     )
     assert transport_error("whatever", status=429, headers={}).code == "ratelimited"
+
+
+def test_no_call_is_made_once_the_deadline_has_passed() -> None:
+    clock = Clock()
+    clock.now = 10.0
+    calls: list[int] = []
+
+    def call() -> None:
+        calls.append(1)
+
+    with pytest.raises(TransportError) as info:
+        call_with_retry(call, deadline=10, clock=clock, sleep=clock.sleep)
+    assert (info.value.code, info.value.retryable) == ("deadline", True)
+    assert calls == []
+
+
+def test_a_retry_that_would_start_at_the_deadline_is_not_made() -> None:
+    clock = Clock()
+    calls: list[int] = []
+
+    def limited() -> None:
+        calls.append(1)
+        raise TransportError("ratelimited", retryable=True, retry_after=10)
+
+    with pytest.raises(TransportError, match="deadline"):
+        call_with_retry(limited, deadline=10, clock=clock, sleep=clock.sleep)
+    assert calls == [1]  # the wait fits exactly, but no time is left for the call itself
+    assert clock.now == 10
+
+
+def test_every_slack_call_gets_the_time_left_as_its_timeout() -> None:
+    clock = Clock()
+    clock.now = 2.5
+    api = FakeSlackApi()
+    transport = SlackTransport(api, clock=clock, sleep=clock.sleep)
+    parent = transport.post_parent(CHANNEL, "hello", META, deadline=10)
+    api.fail_next(TransportError("internal_error", retryable=True))
+    transport.update_parent(CHANNEL, parent, "again", META, deadline=10)  # retried at t=3.0
+    reply = transport.post_reply(CHANNEL, parent, "r", broadcast=False, deadline=4)
+    transport.delete(CHANNEL, reply, deadline=3.25)
+    assert api.timeouts == [7.5, 7.5, 7.0, 1.0, 0.25]

@@ -26,9 +26,15 @@ class StubClient:
         return method
 
 
-def api_with(stub: StubClient) -> WebClientSlackApi:
+def api_with(stub: StubClient, timeouts: list[float] | None = None) -> WebClientSlackApi:
     api = WebClientSlackApi("xoxb-test-not-a-real-token")
-    api._client = stub  # type: ignore[assignment]
+
+    def client_for(timeout: float) -> Any:
+        if timeouts is not None:
+            timeouts.append(timeout)
+        return stub
+
+    api._client_for = client_for  # type: ignore[method-assign]
     return api
 
 
@@ -46,7 +52,19 @@ def slack_error(status: int, error: str, headers: dict[str, str] | None = None) 
 
 
 def test_client_has_no_builtin_retry_handlers() -> None:
-    assert WebClientSlackApi("xoxb-test-not-a-real-token")._client.retry_handlers == []
+    assert WebClientSlackApi("xoxb-test-not-a-real-token")._client_for(5.0).retry_handlers == []
+
+
+def test_each_request_times_out_within_the_time_left() -> None:
+    client = WebClientSlackApi("xoxb-test-not-a-real-token", timeout=5.0)._client_for(1.25)
+    assert client.timeout == 1.25  # a float: urllib accepts it, int() would round 0.9 to 0
+
+    timeouts: list[float] = []
+    api = api_with(StubClient({"ok": True, "ts": "1.1"}), timeouts)
+    api.post(CHANNEL, "hi", timeout=0.4)
+    api.update(CHANNEL, "1.1", "v2", timeout=30.0)
+    api.delete(CHANNEL, "1.1")
+    assert timeouts == [0.4, 5.0, 5.0]  # min(client timeout, time left)
 
 
 def test_post_returns_ts_verbatim_and_passes_metadata() -> None:
