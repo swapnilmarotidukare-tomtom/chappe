@@ -8,15 +8,9 @@
 
 Chappe reports the progress of Apache Airflow 3 runs to Slack. Each DAG run gets one channel message that is edited in place as milestones start and finish. Its first line shows the run's status and links to the run in Airflow; below it, one line per step. When the run completes, every step shows as done; a failed run lists only the sections that went wrong. Each step's start and end, with the error of a failed step, go into the message's thread as plain replies (Slack shows when each was posted), and when a run fails an alert there mentions your on-call. DAG authors mark the tasks that matter with `@milestone`; channel, theme and icons are configuration.
 
-```text
-:large_yellow_circle: *orders 2026.10.1* · In progress · started 2026-10-02 08:05:00 UTC
-:white_check_mark: Extract
-:hourglass_flowing_sand: Transform · running since 2026-10-02 08:07:00 UTC
-:white_circle: Load
-:white_circle: Report
+<img width="866" height="404" alt="image" src="https://github.com/user-attachments/assets/2a52f54e-0e5b-4765-a159-f14bb1766d27" /> <img width="1114" height="462" alt="image" src="https://github.com/user-attachments/assets/eac60a22-9c71-465a-84a8-e36a18d924f5" />
 
-:stopwatch: Last updated: 2026-10-02 08:12:00 UTC
-```
+
 
 That is the default `ledger` theme (the title links to the Airflow run; the last line says when Chappe last edited the message, always in UTC). The `metro` theme draws the run as a line of stations, and `plain` is a one-line fallback; pick one with `theme: {name: …}`.
 
