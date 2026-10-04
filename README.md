@@ -61,15 +61,15 @@ The token is a fine-grained GitHub token with read-only Contents access to this 
 
 ### In a Docker image
 
+curl reads the token from a config file mounted as a BuildKit secret (`curl -K`), so the token never appears in a process's arguments:
+
 ```dockerfile
 # syntax=docker/dockerfile:1
 FROM apache/airflow:3.2.2-python3.12
-RUN --mount=type=secret,id=gh_token,uid=50000 \
+RUN --mount=type=secret,id=gh_curl,uid=50000 \
     set -eu; cd /tmp; \
     for f in chappe-0.0.1-py3-none-any.whl chappe-0.0.1-py3-none-any.whl.sha256; do \
-      curl -fsSL -H "Authorization: Bearer $(cat /run/secrets/gh_token)" \
-           -H "Accept: application/vnd.github.raw" \
-           -o "$f" "https://api.github.com/repos/<org>/<repo>/contents/releases/$f?ref=v0.0.1"; \
+      curl -fsSL -K /run/secrets/gh_curl -H "Accept: application/vnd.github.raw" -o "$f" "https://api.github.com/repos/<org>/<repo>/contents/releases/$f?ref=v0.0.1"; \
     done; \
     sha256sum -c chappe-0.0.1-py3-none-any.whl.sha256; \
     pip install --no-cache-dir chappe-0.0.1-py3-none-any.whl \
@@ -77,25 +77,40 @@ RUN --mount=type=secret,id=gh_token,uid=50000 \
     rm -f chappe-0.0.1-py3-none-any.whl*
 ```
 
-Build it with the token passed as a build secret:
+The secret file holds one line, a curl config option with the token in place of `<token>`:
 
-```bash
-DOCKER_BUILDKIT=1 docker build --secret id=gh_token,env=GH_TOKEN .
+```text
+header = "Authorization: Bearer <token>"
 ```
 
-- The secret is mounted only for that `RUN` step and never lands in a layer. `uid=50000` is the user of the official Airflow image; change it if your image runs as another user.
-- No credentials appear in a URL. The token goes in a request header.
+Create it from your CI's secret store with permissions only its owner can read, outside the build context, pass it to the build, and delete it afterwards. It must never be in the build context or committed. With the token in `GH_TOKEN`, for example:
+
+```bash
+umask 077
+gh_curl="$(mktemp)"                 # outside the build context
+trap 'rm -f "$gh_curl"' EXIT        # deleted after the build, also on failure
+printf 'header = "Authorization: Bearer %s"\n' "${GH_TOKEN:?set GH_TOKEN}" > "$gh_curl"
+docker build --secret id=gh_curl,src="$gh_curl" .
+```
+
+That is `docker build --secret id=gh_curl,src=<path outside the build context> .` with a temporary file. `printf` is a shell builtin in bash, zsh and sh, so the token is not a process argument there either.
+
+- The token never appears in a process's arguments (argv), in an image layer, or in a URL. The secret is mounted only for that `RUN` step. `uid=50000` is the user of the official Airflow image; change it if your image runs as another user.
+- The build needs BuildKit, the default since Docker Engine 23. On older engines set `DOCKER_BUILDKIT=1`.
 - The wheel's SHA256 is checked before it is installed. A mismatch stops the build.
 - Match the image tag, the constraints version and the Python version to your deployment. Instead of the upstream constraints URL you can use the file vendored in this repository, `constraints/airflow-3.2.2-py3.12.txt`.
 
 ### Without Docker
 
-Use the same download, check and install steps, with the token read from an environment variable that is never echoed or logged:
+Use the same download, check and install steps. The shell writes the same curl config file with its `printf` builtin, from a token in an environment variable that is never echoed or logged, and curl reads it with `-K`; the token is never a curl argument:
 
 ```bash
+umask 077
+gh_curl="$(mktemp)"
+trap 'rm -f "$gh_curl"' EXIT
+printf 'header = "Authorization: Bearer %s"\n' "${GH_TOKEN:?set GH_TOKEN}" > "$gh_curl"
 for f in chappe-0.0.1-py3-none-any.whl chappe-0.0.1-py3-none-any.whl.sha256; do
-  curl -fsSL -H "Authorization: Bearer ${GH_TOKEN:?set GH_TOKEN}" \
-       -H "Accept: application/vnd.github.raw" \
+  curl -fsSL -K "$gh_curl" -H "Accept: application/vnd.github.raw" \
        -o "$f" "https://api.github.com/repos/<org>/<repo>/contents/releases/$f?ref=v0.0.1"
 done
 sha256sum -c chappe-0.0.1-py3-none-any.whl.sha256   # on macOS: shasum -a 256 -c
