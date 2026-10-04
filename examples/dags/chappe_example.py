@@ -3,7 +3,7 @@ import time
 from airflow.sdk import DAG, TaskGroup, task
 
 from chappe import milestone
-from chappe.integrations.airflow.notifier import ChappeNotifier
+from chappe.integrations.airflow import ChappeNotifier
 
 with DAG(
     "chappe_example",
