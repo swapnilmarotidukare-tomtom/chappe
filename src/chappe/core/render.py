@@ -58,6 +58,7 @@ class RenderContext:
     tz: tzinfo
     alert_mention: str | None = None
     limits: Limits = Limits()
+    collapse_done_sections: bool = False  # theme option (ledger)
 
     def icon(self, state: StepState | ProcessState) -> str:
         return self.fmt.icon(self.tokens.icons[state.value])

@@ -51,7 +51,7 @@ def test_validate_config_rejects_an_unknown_theme(
     path.write_text(OK_CONFIG.replace("chappe:\n", bad_default))
     assert main(["validate-config", str(path)]) == 1
     err = capsys.readouterr().err
-    assert "defaults.theme: unknown theme 'neon'; available themes: plain, thread" in err
+    assert "defaults.theme: unknown theme 'neon'; available themes: ledger, metro, plain" in err
 
 
 def test_validate_config_rejects_an_unknown_process_theme(

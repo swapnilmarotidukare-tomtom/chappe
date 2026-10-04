@@ -11,6 +11,27 @@ Create your own internal Slack app per workspace. Never distribute a shared Chap
 
 The bot token goes into the `chappe_slack` Airflow connection (step 3 below). Never put it in a file in this repository.
 
+## Quick way: the helper script
+
+After step 1, everything else is one script. Your token, channel and mention live in one file **outside the repo**, `~/.config/chappe/dev.env`, with permissions 600. The script never prints the token or writes it into the repo.
+
+```bash
+uv sync --all-groups
+scripts/dev-airflow.sh setup        # once: creates ~/.config/chappe/dev.env; edit it
+scripts/dev-airflow.sh check        # validates the file and generates .airflow/chappe.dev.yaml
+scripts/dev-airflow.sh start        # stops leftover Airflow processes, then runs airflow standalone
+```
+
+In a second terminal:
+
+```bash
+scripts/dev-airflow.sh password     # the admin password for http://localhost:8080
+scripts/dev-airflow.sh run pass     # or: run fail, run parallel (the scenarios in section 4)
+scripts/dev-airflow.sh stop         # when you are done
+```
+
+`start` passes the token to Airflow as `AIRFLOW_CONN_CHAPPE_SLACK`, only in that process. If you also added `chappe_slack` in the Airflow UI, the variable wins. Sections 2 and 3 below are the same steps by hand.
+
 ## 2. Start Airflow (local dev)
 
 From the repository root:
@@ -57,10 +78,10 @@ Check each scenario in the test channel. After every run, also check:
 
 | Scenario | Command | Expected |
 |---|---|---|
-| Passing run | `airflow dags trigger chappe_example` | One message whose header moves from "In progress" to "Passed" (thread theme: two sections, a check mark per finished step); one reply per finished step in its thread and one final reply, also shown in the channel. Admin → Variables shows one `chappe__chappe_example__…` Variable with a masked value |
-| Failing run | `airflow dags trigger chappe_example --conf '{"fail": true}'` | Message ends "Failed"; exactly one final reply (the one shown in the channel); an alert reply mentions you and names "Regression checks" |
+| Passing run | `airflow dags trigger chappe_example` | One message whose first line (🟡 In progress, linking to the run) is followed by the four steps, Extract → Transform → Load → Report, each turning ✅ as it finishes; the running one reads "running since HH:MM". When the run completes, the first line reads 🟢 *title* · Completed in … · started … and every step shows as done. The thread gets a plain reply when each step starts and when it ends (with its duration). Admin → Variables shows one `chappe__chappe_example__…` Variable with a masked value |
+| Failing run | `airflow dags trigger chappe_example --conf '{"fail": true}'` | 🔴 Failed after …, then the counts and the four steps: Load ❌ with its error in the thread, Report ❌ too (Airflow marks it upstream_failed), and one alert in the thread that mentions you |
 | Two parallel runs | run `airflow dags trigger chappe_example` twice within a second | Two separate messages, one per run, no interleaving. If a duplicate parent appears for a moment, it is deleted and one message per run remains |
-| Cleared task after finish | after a passing run, clear `compare.regression` in that run (UI: task → Clear, without downstream) | Known limit: the message keeps showing "Passed" while the task runs again. It shows the new final status only when the run finishes again |
+| Cleared task after finish | after a passing run, clear `load` in that run (UI: task → Clear, without downstream) | Known limit: the message keeps showing "Completed" while the task runs again. It shows the new final status only when the run finishes again |
 | Cleanup (dry run) | `airflow variables list \| grep chappe__`, then `chappe cleanup --older-than 1h --dry-run` | The list shows one `chappe__chappe_example__…` Variable per run above. The dry run lists none (they are new) and deletes nothing |
 | Kill switch | restart with `CHAPPE_ENABLED=false`, trigger | No message; the run is unaffected |
 | Bad config | set `channel: "#test"`, restart, trigger | No message for this process; the log says "chappe: process '<name>' is disabled" with the reason (an error in `defaults` says "chappe is disabled"); the run is unaffected |

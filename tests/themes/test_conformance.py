@@ -16,8 +16,12 @@ class TestPlain(ThemeConformance):
     theme = THEMES["plain"]
 
 
-class TestThread(ThemeConformance):
-    theme = THEMES["thread"]
+class TestLedger(ThemeConformance):
+    theme = THEMES["ledger"]
+
+
+class TestMetro(ThemeConformance):
+    theme = THEMES["metro"]
 
 
 @pytest.mark.parametrize("sample", sorted(SAMPLES))

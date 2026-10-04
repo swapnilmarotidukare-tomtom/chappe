@@ -18,7 +18,6 @@ from chappe.core.reconcile import SentState
 from chappe.core.render import RenderContext
 from chappe.core.view import ProcessView
 from chappe.stores.airflow_variable import encode, key_for
-from chappe.themes.builtin.thread import ThreadTheme
 from chappe.transports.slack.transport import EVENT_TYPE, SlackTransport
 from tests.support.engine import (
     CHANNEL,
@@ -33,6 +32,7 @@ from tests.support.engine import (
 )
 from tests.support.fakes import FakeSlackApi, FakeVariables
 from tests.support.samples import ProcessViewBuilder, default_context
+from tests.support.thread_theme import ThreadTheme
 
 S, P, R, F = StepState.SUCCEEDED, StepState.PENDING, StepState.RUNNING, StepState.FAILED
 
@@ -786,7 +786,7 @@ def test_a_final_event_out_of_budget_logs_an_error_with_the_process_key(
     assert "left to the next event" in record.getMessage()
 
 
-THREAD_CTX = default_context("thread")
+THREAD_CTX = default_context("plain")
 
 
 def parallel_run(

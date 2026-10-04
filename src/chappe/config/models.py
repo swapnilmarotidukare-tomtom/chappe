@@ -44,7 +44,14 @@ class StoreConfig(_Model):
 class ThemeConfig(_Model):
     """How messages look."""
 
-    name: str = Field(default="thread", description="`thread` or `plain` (the flat fallback).")
+    name: str = Field(
+        default="ledger",
+        description="`ledger` (default), `metro`, or `plain` (the flat fallback).",
+    )
+    collapse_done_sections: bool = Field(
+        default=False,
+        description="ledger: show a fully done section as one line instead of listing its steps.",
+    )
     tokens: dict[str, Any] | None = Field(
         default=None,
         description="Icon and label overrides; `extends` names the theme the tokens start from.",

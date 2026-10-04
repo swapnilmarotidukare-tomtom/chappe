@@ -102,6 +102,20 @@ def wire(
     return api, store
 
 
+STEPS = ["Extract", "Transform", "Load", "Report"]
+
+
+def replies_by_step(texts: list[str]) -> dict[str, list[str]]:
+    """Step replies (`STATUS: *<name>*…`) as `STATUS…`, grouped by step name, in posting order."""
+    found: dict[str, list[str]] = {}
+    for text in texts:
+        if ": *" in text and not text.startswith("<@"):
+            status, _, rest = text.partition(": *")
+            name, _, tail = rest.partition("*")
+            found.setdefault(name, []).append(status + tail)
+    return found
+
+
 def run(module: ModuleType, api: FakeSlackApi, conf: dict[str, Any], reason: str) -> str:
     dag_run = module.dag.test(run_conf=conf)
     assert str(getattr(dag_run.state, "value", dag_run.state)) == (
@@ -110,16 +124,11 @@ def run(module: ModuleType, api: FakeSlackApi, conf: dict[str, Any], reason: str
     # What the task callbacks (@milestone) left during dag.test(): a parent, not yet final.
     assert any(name == "post" for name, _ in api.calls)
     (parent,) = api.top_level(CHANNEL)
-    # the header line is the run's state; the thread theme also shows a state per section below it
-    header = parent.text.splitlines()[0]
-    assert "In progress" in header
-    assert "Passed" not in header and "Failed" not in header
-    # the thread theme replies per finished step; only the final reply is broadcast
-    assert [m for m in api.replies(CHANNEL, parent.ts) if m.broadcast] == []
+    header = parent.text.split("\n")[0]
+    assert header.startswith(":large_yellow_circle: *<") and " · In progress" in header
     # The DAG callback, as the DAG processor sends it (minimal context, finding 5). On Airflow
     # 3.2.2, dag.test()'s own DAG callback passes a SerializedDAG whose tasks carry no milestone
-    # marker, so it sends nothing; the "exactly one final reply" checks below therefore do not
-    # exercise the dedup of a second final event.
+    # marker, so it sends nothing.
     ChappeNotifier().notify({"dag": module.dag, "run_id": dag_run.run_id, "reason": reason})
     return str(dag_run.run_id)
 
@@ -130,15 +139,17 @@ def assert_kept(store: AirflowVariableStore, run_id: str, parent_ts: str) -> Non
     assert stored.watermark is not None and stored.watermark.finished
 
 
-def assert_step_replies(thread: list[Any]) -> None:
-    """Exactly one reply per milestone, none for cleanup_tmp, no duplicates."""
-    steps = [m.text.split("*")[1] for m in thread if not m.broadcast and m.text.count("*") >= 2]
-    assert sorted(steps) == sorted(
-        ["Parquet → Delta", "Geometry", "ID stability", "Regression checks"]
-    )
+def test_the_example_is_one_flat_dag_of_four_milestones() -> None:
+    module = load_example()
+    assert [t.task_id for t in module.dag.topological_sort()] == [
+        "extract",
+        "transform",
+        "load",
+        "report",
+    ]
 
 
-def test_passing_run_posts_one_parent_and_keeps_the_variable(
+def test_passing_run_lists_every_step_with_each_start_and_end_in_the_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = load_example()
@@ -146,33 +157,57 @@ def test_passing_run_posts_one_parent_and_keeps_the_variable(
     run_id = run(module, api, {}, "success")
 
     (parent,) = api.top_level(CHANNEL)
-    # two sections of two milestones each: one icon per step, exactly two per row, so a third
-    # icon in "Prepare" would mean cleanup_tmp (not a milestone) was rendered
-    rows = parent.text.splitlines()[1:3]
-    assert rows == [
-        ":white_check_mark::white_check_mark:  *Prepare* · Passed",
-        ":white_check_mark::white_check_mark:  *vs orders 2026.09.1* · Passed",
-    ]
-    assert_step_replies(api.replies(CHANNEL, parent.ts))
-    (final,) = [m for m in api.replies(CHANNEL, parent.ts) if m.broadcast]
-    assert "Passed" in final.text
+    # a known limit: README.md, "Known limits of 0.0.1" (DAG callback without dag_run or params)
+    # the notifier's minimal DAG-callback context carries no params and no run times, so the
+    # title falls back to "<dag_id> · <run_id>" and the header has no duration or "started" part
+    lines = parent.text.split("\n")
+    assert lines[0].startswith(":large_green_circle: *<http://localhost:8080/dags/chappe_example/")
+    assert "|chappe_example · " in lines[0] and lines[0].endswith(">* · Completed")
+    # the example config uses the custom :chappe-*: icons for steps
+    assert lines[1:5] == [f":chappe-done: {name}" for name in STEPS]
+    assert lines[5] == "" and lines[6].startswith(":stopwatch: Last updated: ")
+    assert lines[6].endswith(" UTC") and len(lines) == 7
+    replies = [m.text for m in api.replies(CHANNEL, parent.ts)]
+    assert not any(m.broadcast for m in api.replies(CHANNEL, parent.ts))
+    steps = replies_by_step(replies)
+    assert sorted(steps) == sorted(STEPS)
+    for name in STEPS:
+        started, ended = steps[name]
+        assert started == "STARTED", (name, started)
+        assert ended.startswith("COMPLETED"), (name, ended)
     assert_kept(store, run_id, parent.ts)
 
 
-def test_failing_run_ends_failed_with_an_alert(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_failing_run_lists_the_failing_steps_and_alerts_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = load_example()
     states = {t.task_id: "success" for t in module.dag.tasks}
-    states["compare.regression"] = "failed"
+    states["load"] = "failed"
+    states["report"] = "upstream_failed"
     api, store = wire(monkeypatch, states)
     run_id = run(module, api, {"fail": True}, "task_failure")
 
     (parent,) = api.top_level(CHANNEL)
-    assert "Failed" in parent.text
-    thread = api.replies(CHANNEL, parent.ts)
-    assert_step_replies([m for m in thread if not m.text.startswith("<@")])
-    replies = [m.text for m in thread]
-    alerts = [text for text in replies if text.startswith("<@U0123456789>")]
-    (final,) = [m.text for m in thread if m.broadcast and m.text not in alerts]  # one final reply
-    assert "Failed" in final
-    assert any("Regression checks" in text for text in alerts)
+    lines = parent.text.split("\n")
+    assert lines[0].startswith(":red_circle: *<") and lines[0].endswith(">* · Failed")
+    # upstream_failed maps to StepState.FAILED (integrations/airflow/source.py)
+    assert lines[1:] == [
+        "2 completed · 2 failed",
+        ":chappe-done: Extract",
+        ":chappe-done: Transform",
+        ":chappe-failed: Load · Failed",
+        ":chappe-failed: Report · Failed",
+        "",
+        lines[-1],
+    ]
+    assert lines[-1].startswith(":stopwatch: Last updated: ") and lines[-1].endswith(" UTC")
+    replies = [m.text for m in api.replies(CHANNEL, parent.ts)]
+    (alert,) = [text for text in replies if text.startswith("<@U0123456789>")]
+    assert alert.startswith("<@U0123456789> :red_circle: *chappe_example · ")
+    assert "* · Load" in alert and "Report: An upstream task failed" in alert
+    steps = replies_by_step(replies)
+    assert steps["Load"][0] == "STARTED"
+    assert steps["Load"][-1].startswith("FAILED")
+    assert steps["Report"] == ["FAILED\nAn upstream task failed"]  # never started: end only
     assert_kept(store, run_id, parent.ts)

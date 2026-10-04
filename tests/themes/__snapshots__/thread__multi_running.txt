@@ -1,8 +1,0 @@
-=== parent ===
-:hourglass_flowing_sand: *orders 2026.10.1* · In progress · 5h 54m · started 08:05
-:white_check_mark::white_check_mark::white_check_mark:  *Prepare* · Passed
-:hourglass_flowing_sand::white_circle:  *Regression vs baseline 2026.10.0* · ID stability
-Now: ID stability (5m)
-<https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
-=== thread ===
-=== alerts ===

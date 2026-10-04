@@ -1,9 +1,11 @@
 import time
 
-from airflow.sdk import DAG, TaskGroup, task
+from airflow.sdk import DAG, task
 
 from chappe import milestone
 from chappe.integrations.airflow import ChappeNotifier
+
+STEP_SECONDS = 30  # slow enough to watch each step move in Slack; tests replace time.sleep
 
 with DAG(
     "chappe_example",
@@ -12,38 +14,27 @@ with DAG(
     on_success_callback=ChappeNotifier(),
     on_failure_callback=ChappeNotifier(),
 ) as dag:
-    with TaskGroup("prepare", group_display_name="Prepare"):
 
-        @milestone("Parquet → Delta")
-        @task
-        def convert() -> None:
-            time.sleep(5)
+    @milestone("Extract")
+    @task
+    def extract() -> None:
+        time.sleep(STEP_SECONDS)
 
-        @task
-        def cleanup_tmp() -> None:
-            time.sleep(1)
+    @milestone("Transform")
+    @task
+    def transform() -> None:
+        time.sleep(STEP_SECONDS)
 
-        @milestone("Geometry")
-        @task
-        def geometry() -> None:
-            time.sleep(5)
+    @milestone("Load")
+    @task
+    def load(params: dict | None = None) -> None:
+        time.sleep(STEP_SECONDS)
+        if params and params.get("fail"):
+            raise RuntimeError("load failed (example)")
 
-        convert() >> cleanup_tmp() >> geometry()
+    @milestone("Report")
+    @task
+    def report() -> None:
+        time.sleep(STEP_SECONDS)
 
-    with TaskGroup("compare", group_display_name="vs orders 2026.09.1"):
-
-        @milestone("ID stability")
-        @task
-        def id_stability() -> None:
-            time.sleep(5)
-
-        @milestone("Regression checks")
-        @task
-        def regression(params: dict | None = None) -> None:
-            time.sleep(5)
-            if params and params.get("fail"):
-                raise RuntimeError("regression check failed (example)")
-
-        id_stability() >> regression()
-
-    dag.get_task("prepare.geometry") >> dag.get_task("compare.id_stability")
+    extract() >> transform() >> load() >> report()

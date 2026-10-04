@@ -1,0 +1,18 @@
+=== parent ===
+:large_green_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · Completed in 10h 11m · started 2026-10-02 08:05:00 UTC
+*Prepare* · 3 of 3 done
+:white_check_mark: Parquet → Delta
+:white_check_mark: Geometry
+:white_check_mark: Aggregates
+*Regression vs baseline 2026.10.0* · 2 of 2 done
+:white_check_mark: ID stability
+:white_check_mark: Regression
+
+:stopwatch: Last updated: 2026-10-02 18:16:00 UTC
+=== thread ===
+[step:prepare.parquet_delta:succeeded] COMPLETED: *Parquet → Delta*
+[step:prepare.geometry:succeeded] COMPLETED: *Geometry*
+[step:prepare.aggregates:succeeded] COMPLETED: *Aggregates*
+[step:regression_vs_baseline_2026_10_0.id_stability:succeeded] COMPLETED: *ID stability*
+[step:regression_vs_baseline_2026_10_0.regression:succeeded] COMPLETED: *Regression*
+=== alerts ===

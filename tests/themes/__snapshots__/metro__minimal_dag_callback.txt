@@ -1,6 +1,11 @@
 === parent ===
-:white_circle: *orders 2026.10.1* · Waiting · started 08:05
-:white_circle::white_circle:  0/2 steps
+*orders 2026.10.1*
+:large_green_circle: Passed
+```
+●  Parquet → Delta
+┃
+●  Geometry
+```
 <https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
 === thread ===
 === alerts ===

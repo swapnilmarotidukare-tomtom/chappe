@@ -73,7 +73,7 @@ def test_dag_supplied_text_is_escaped() -> None:
     assert "&lt;orders&gt;" in text and "<orders>" not in text
 
 
-# Owner's Phase 2 decision: failed runs count steps per state, like the thread theme.
+# Owner's Phase 2 decision: failed runs count steps per state.
 
 
 def status_line(name: str) -> str:
