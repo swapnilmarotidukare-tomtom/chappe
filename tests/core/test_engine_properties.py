@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import replace
+from datetime import timedelta
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -11,8 +13,10 @@ from chappe.core.events import EventKind
 from chappe.core.model import ProcessState, StepState
 from chappe.core.reconcile import slack_ts_key
 from chappe.core.view import ProcessView
+from chappe.themes.builtin.thread import ThreadTheme
 from tests.support.engine import CHANNEL, KEY, render, stage, store_for, writer
 from tests.support.fakes import FakeSlackApi, FakeVariables
+from tests.support.samples import ProcessViewBuilder, default_context
 
 S, P, R = StepState.SUCCEEDED, StepState.PENDING, StepState.RUNNING
 FIRST_VIEWS = [stage(R, P, P), stage(S, R, P), stage(R, R, P)]
@@ -144,3 +148,68 @@ def test_any_order_or_duplication_ends_in_the_final_render(order: list[int]) -> 
     (parent,) = api.top_level(CHANNEL)
     assert parent.text == final.parent.text
     assert [m.text for m in api.replies(CHANNEL, parent.ts)] == [e.text for e in final.thread]
+
+
+THREAD_CTX = default_context("thread")
+
+
+def _thread_view(
+    states: tuple[StepState, StepState, StepState],
+    timed: str | None,
+    *,
+    later: int = 0,
+    finished: bool = False,
+) -> ProcessView:
+    """Extract, then Transform and Load in parallel; only the step named `timed` has times."""
+    builder = ProcessViewBuilder(key=KEY).section("Main")
+    for title, state in zip(("Extract", "Transform", "Load"), states, strict=True):
+        builder.step(title, state, 60, timed=title == timed)
+    if finished:
+        builder.finished(ProcessState.SUCCEEDED)
+    view = builder.build()
+    return replace(view, now=view.now + timedelta(minutes=later))
+
+
+THREAD_VIEWS = [
+    _thread_view((R, P, P), "Extract"),
+    _thread_view((S, P, P), "Extract"),
+    _thread_view((S, R, R), "Transform"),
+    _thread_view((S, S, R), "Transform"),
+    _thread_view((S, S, S), "Load", later=1),  # Load's event shows Transform finished, untimed
+    _thread_view((S, S, S), "Transform", later=-1),  # Transform's own, older callback
+    _thread_view((S, S, S), None, finished=True),
+]
+THREAD_FINAL = len(THREAD_VIEWS) - 1
+TRANSFORM_OWN, TRANSFORM_OWN_OLDER = 3, 5
+
+
+@settings(max_examples=200, deadline=None)
+@given(
+    st.lists(st.integers(0, THREAD_FINAL), max_size=4).flatmap(
+        lambda extra: st.permutations(list(range(len(THREAD_VIEWS))) + extra)
+    )
+)
+def test_thread_parent_shows_the_newest_view_and_every_reply_goes_out_once(
+    order: list[int],
+) -> None:
+    """An older view never changes the parent text; replies are sent once, whatever the order."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    theme = ThreadTheme()
+    w = writer(api, variables, theme=theme, context=THREAD_CTX)
+    newest: ProcessView | None = None
+    for index in order:
+        view = THREAD_VIEWS[index]
+        kind = EventKind.RUN_FINISHED if index == THREAD_FINAL else EventKind.STEP_FINISHED
+        assert w.handle(view, kind) in (HandleResult.SENT, HandleResult.SKIPPED)
+        if newest is None or view.watermark.newer_than(newest.watermark):
+            newest = view
+        (parent,) = api.top_level(CHANNEL)
+        assert parent.text == theme.render(newest, THREAD_CTX).parent.text
+
+    (parent,) = api.top_level(CHANNEL)
+    replies = [m.text for m in api.replies(CHANNEL, parent.ts)]
+    assert len(replies) == 4  # Extract, Transform, Load, and the result: once each
+    (transform,) = [text for text in replies if "*Transform*" in text]
+    before_final = order[: order.index(THREAD_FINAL)]
+    if TRANSFORM_OWN in before_final or TRANSFORM_OWN_OLDER in before_final:
+        assert "1h 00m" in transform  # its own callback came in time: the reply has its duration

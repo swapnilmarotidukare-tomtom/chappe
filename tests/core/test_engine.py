@@ -599,3 +599,53 @@ def test_thread_race_fallback_a_lost_own_callback_is_covered_by_the_final_event(
     assert len(thread_replies(api, "Load")) == 1
     saved = store_for(variables).load(KEY)
     assert saved is not None and "step:main.transform:succeeded" in saved.sent_keys
+
+
+def test_thread_race_an_own_callback_older_than_the_parallel_event_still_sends_its_reply() -> None:
+    """Owner's race, other ordering: Transform's own callback is older than Load's event.
+
+    The view is not newer, so the parent keeps the newer text; Transform's reply still goes out
+    once, with its duration.
+    """
+    api, variables = FakeSlackApi(), FakeVariables()
+    theme = ThreadTheme()
+    load_first = parallel_run(transform_timed=False, load_timed=True)
+    writer(api, variables, theme=theme, context=THREAD_CTX).handle(load_first)
+    before = store_for(variables).load(KEY)
+    assert before is not None
+
+    own = parallel_run(transform_timed=True, load_timed=False, later=-1)
+    assert not own.watermark.newer_than(load_first.watermark)
+    assert writer(api, variables, theme=theme, context=THREAD_CTX).handle(own) is (
+        HandleResult.SENT
+    )
+    (reply,) = thread_replies(api, "Transform")
+    assert "4h 21m" in reply
+    (parent,) = api.top_level(CHANNEL)
+    assert parent.text == theme.render(load_first, THREAD_CTX).parent.text
+    assert not [c for c in api.calls if c[0] == "update"]  # the older view never edits the parent
+    after = store_for(variables).load(KEY)
+    assert after is not None and "step:main.transform:succeeded" in after.sent_keys
+    assert (after.parent_text, after.parent_written, after.watermark) == (
+        before.parent_text,
+        before.parent_written,
+        before.watermark,
+    )
+
+    # handled again (a duplicate delivery): nothing left to send
+    calls = len(api.calls)
+    assert writer(api, variables, theme=theme, context=THREAD_CTX).handle(own) is (
+        HandleResult.SKIPPED
+    )
+    assert len(api.calls) == calls
+
+
+def test_an_older_view_without_a_stored_parent_sends_nothing() -> None:
+    """No parent yet: a newer event posts it, so an older view leaves the replies to that one."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    newer = parallel_run(transform_timed=False, load_timed=True)
+    store_for(variables).save(KEY, SentState(KEY, watermark=newer.watermark))
+    own = parallel_run(transform_timed=True, load_timed=False, later=-1)
+    w = writer(api, variables, theme=ThreadTheme(), context=THREAD_CTX)
+    assert w.handle(own) is HandleResult.SKIPPED
+    assert api.calls == []

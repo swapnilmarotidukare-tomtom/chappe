@@ -123,8 +123,8 @@ class Engine:
         try:
             if sent is not None:
                 sent = self._clear_stale(view.key, sent, deadline)
-            if not write_allowed(view.watermark, sent):
-                return HandleResult.SKIPPED
+            if sent is not None and not write_allowed(view.watermark, sent):
+                return self._send_missing(view, sent, deadline, final=final)
             messages = self._render(view)
             result = self._apply(view, messages, sent, deadline, final=final)
             if final and result is HandleResult.SENT:
@@ -171,6 +171,45 @@ class Engine:
                 return HandleResult.YIELDED
             state, saved = posted, True
 
+        replied, complete = self._send_replies(view, messages, state, deadline, final=final)
+        if complete and not (replied or saved):
+            # nothing changed in Slack; remember the watermark
+            self._store.save(key, SentState(key, watermark=wm))
+        return HandleResult.SENT
+
+    def _send_missing(
+        self, view: ProcessView, sent: SentState, deadline: float, *, final: bool
+    ) -> HandleResult:
+        """A view that is not newer never touches the parent, but sends replies not yet sent.
+
+        Parallel tasks race: a task's own callback (the only view with its times) can be older
+        than a parallel event that already showed it finished. Its reply must still go out.
+        Without a parent, a newer event posts it and sends the replies.
+        """
+        if sent.parent_ref is None:
+            return HandleResult.SKIPPED
+        messages = self._render(view)
+        plan = plan_sends(messages, sent)
+        if not (plan.entries or plan.alerts):
+            return HandleResult.SKIPPED
+        self._send_replies(view, messages, sent, deadline, final=final)
+        return HandleResult.SENT
+
+    def _send_replies(
+        self,
+        view: ProcessView,
+        messages: MessageSet,
+        state: SentState,
+        deadline: float,
+        *,
+        final: bool,
+    ) -> tuple[bool, bool]:
+        """Post the entries and alerts not sent yet, saving after each.
+
+        Returns (any sent, all sent); all sent is False when the time budget ran out.
+        """
+        key, wm = view.key, view.watermark
+        saved = False
         plan = plan_sends(messages, state)
         replies = [(e.key, e.text, e.broadcast) for e in plan.entries]
         replies += [(a.key, a.text, False) for a in plan.alerts]
@@ -193,7 +232,7 @@ class Engine:
                         len(replies) - index,
                     )
                 self._metric("chappe.budget_spent")
-                return HandleResult.SENT
+                return saved, False
             parent = state.parent_ref
             if parent is None:
                 raise StoreError(f"no parent message stored for {key}")
@@ -204,10 +243,7 @@ class Engine:
                 key, SentState(key, watermark=wm, sent_keys=frozenset({reply_key}))
             )
             saved = True
-        if not saved:
-            # nothing changed in Slack; remember the watermark
-            self._store.save(key, SentState(key, watermark=wm))
-        return HandleResult.SENT
+        return saved, True
 
     def _post_parent(self, key: str, text: str, wm: Watermark, deadline: float) -> SentState | None:
         """Post a parent. If parallel events posted too, the lowest Slack ts wins (contract D2).
