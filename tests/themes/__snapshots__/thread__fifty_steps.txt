@@ -1,0 +1,13 @@
+=== parent ===
+:hourglass_flowing_sand: *fifty steps* · In progress · 1h 45m · started 08:05
+:white_check_mark::white_check_mark::white_check_mark::white_check_mark::white_check_mark::white_check_mark::white_check_mark::white_check_mark::white_check_mark::white_check_mark:  *Section 1* · Passed
+:white_check_mark::white_check_mark::white_check_mark::white_check_mark::white_check_mark::white_check_mark::white_check_mark::white_check_mark::white_check_mark::white_check_mark:  *Section 2* · Passed
+:hourglass_flowing_sand::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle:  *Section 3* · Step 3.1
+:white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle:  *Section 4* · Waiting
+:white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle:  *Section 5* · Waiting
+Now: Step 3.1 (5m)
+<https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
+=== fallback ===
+fifty steps: In progress (20/50)
+=== thread ===
+=== alerts ===

@@ -1,0 +1,8 @@
+=== parent ===
+:white_circle: *orders 2026.10.1* · Waiting · 5m · started 08:05
+:white_circle::white_circle:  0/2 steps
+<https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
+=== fallback ===
+orders 2026.10.1: Waiting (0/2)
+=== thread ===
+=== alerts ===

@@ -1,0 +1,9 @@
+=== parent ===
+:hourglass_flowing_sand: *Ünïcødé &lt;orders&gt; &amp; co* · In progress · 5m · started 08:05
+:hourglass_flowing_sand:  0/1 steps
+Now: Generate &amp; consolidate &lt;aggregates&gt; für Ünïcødé xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (5m)
+<https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
+=== fallback ===
+Ünïcødé <orders> & co: In progress (0/1)
+=== thread ===
+=== alerts ===

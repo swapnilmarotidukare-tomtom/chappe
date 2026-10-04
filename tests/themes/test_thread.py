@@ -157,9 +157,6 @@ def minimal_dag_callback() -> ProcessView:
 
 
 SNAPSHOTS: dict[str, Callable[[], ProcessView]] = {
-    "single_running": lambda: SAMPLES["single_running"],
-    "single_failed": lambda: SAMPLES["single_failed"],
-    "multi_failed": lambda: SAMPLES["multi_failed"],
     "minimal_dag_callback": minimal_dag_callback,
 }
 

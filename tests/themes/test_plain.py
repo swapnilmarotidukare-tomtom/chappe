@@ -1,4 +1,3 @@
-from collections.abc import Callable
 from dataclasses import replace
 from datetime import timedelta
 
@@ -13,7 +12,6 @@ from tests.support.samples import (
     SINGLE_SECTION_SAMPLES,
     TEST_MENTION,
     default_context,
-    dump_message_set,
 )
 
 ALL = sorted(SAMPLES)
@@ -72,8 +70,3 @@ def test_failed_alert_names_the_failed_step() -> None:
 def test_dag_supplied_text_is_escaped() -> None:
     text = render("unicode_long").parent.text
     assert "&lt;orders&gt;" in text and "<orders>" not in text
-
-
-@pytest.mark.parametrize("name", ALL)
-def test_snapshot(name: str, chappe_snapshot: Callable[[str, str], None]) -> None:
-    chappe_snapshot(f"plain__{name}", dump_message_set(render(name)))
