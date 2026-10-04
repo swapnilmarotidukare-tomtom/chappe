@@ -83,17 +83,18 @@ The secret file holds one line, a curl config option with the token in place of 
 header = "Authorization: Bearer <token>"
 ```
 
-Create it from your CI's secret store with permissions only its owner can read, outside the build context, pass it to the build, and delete it afterwards. It must never be in the build context or committed. With the token in `GH_TOKEN`, for example:
+Create it from your CI's secret store with permissions only its owner can read, outside the build context, pass it to the build, and delete it afterwards. It must never be in the build context or committed. The snippet below is meant for one CI step, with the token in `GH_TOKEN`; it also cleans up after itself when pasted into an interactive shell:
 
 ```bash
-umask 077
-gh_curl="$(mktemp)"                 # outside the build context
-trap 'rm -f "$gh_curl"' EXIT        # deleted after the build, also on failure
-printf 'header = "Authorization: Bearer %s"\n' "${GH_TOKEN:?set GH_TOKEN}" > "$gh_curl"
-docker build --secret id=gh_curl,src="$gh_curl" .
+gh_curl="$(mktemp)"                 # outside the build context, readable only by its owner
+(umask 077; printf 'header = "Authorization: Bearer %s"\n' "${GH_TOKEN:?set GH_TOKEN}" > "$gh_curl")
+built=0
+docker build --secret id=gh_curl,src="$gh_curl" . || built=$?
+rm -f "$gh_curl"                    # deleted right after the build, also when it fails
+test "$built" -eq 0
 ```
 
-That is `docker build --secret id=gh_curl,src=<path outside the build context> .` with a temporary file. `printf` is a shell builtin in bash, zsh and sh, so the token is not a process argument there either.
+That is `docker build --secret id=gh_curl,src=<path outside the build context> .` with a temporary file. `printf` is a builtin in common shells (bash, zsh, dash), so the token is not a process argument there either.
 
 - The token never appears in a process's arguments (argv), in an image layer, or in a URL. The secret is mounted only for that `RUN` step. `uid=50000` is the user of the official Airflow image; change it if your image runs as another user.
 - The build needs BuildKit, the default since Docker Engine 23. On older engines set `DOCKER_BUILDKIT=1`.
@@ -105,14 +106,16 @@ That is `docker build --secret id=gh_curl,src=<path outside the build context> .
 Use the same download, check and install steps. The shell writes the same curl config file with its `printf` builtin, from a token in an environment variable that is never echoed or logged, and curl reads it with `-K`; the token is never a curl argument:
 
 ```bash
-umask 077
 gh_curl="$(mktemp)"
-trap 'rm -f "$gh_curl"' EXIT
-printf 'header = "Authorization: Bearer %s"\n' "${GH_TOKEN:?set GH_TOKEN}" > "$gh_curl"
+(umask 077; printf 'header = "Authorization: Bearer %s"\n' "${GH_TOKEN:?set GH_TOKEN}" > "$gh_curl")
+fetched=0
 for f in chappe-0.0.1-py3-none-any.whl chappe-0.0.1-py3-none-any.whl.sha256; do
   curl -fsSL -K "$gh_curl" -H "Accept: application/vnd.github.raw" \
-       -o "$f" "https://api.github.com/repos/<org>/<repo>/contents/releases/$f?ref=v0.0.1"
+       -o "$f" "https://api.github.com/repos/<org>/<repo>/contents/releases/$f?ref=v0.0.1" \
+    || { fetched=$?; break; }
 done
+rm -f "$gh_curl"                    # deleted right after the downloads, also when they fail
+test "$fetched" -eq 0
 sha256sum -c chappe-0.0.1-py3-none-any.whl.sha256   # on macOS: shasum -a 256 -c
 pip install chappe-0.0.1-py3-none-any.whl -c constraints/airflow-3.2.2-py3.12.txt
 ```
