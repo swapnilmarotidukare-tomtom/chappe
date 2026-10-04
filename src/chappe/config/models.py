@@ -72,7 +72,11 @@ class TimeConfig(_Model):
 
 
 class BudgetConfig(_Model):
-    """Time limits for Chappe's own work in one callback. Calls into Airflow are not bounded."""
+    """Time limits for Chappe's own work in one callback.
+
+    The deadline is checked before each Airflow call, but a call into Airflow, once started, is
+    not bounded by it.
+    """
 
     event_seconds: float = Field(
         default=10.0, gt=0, description="Time budget for one step or run-started event."

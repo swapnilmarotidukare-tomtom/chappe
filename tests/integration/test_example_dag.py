@@ -130,6 +130,14 @@ def assert_kept(store: AirflowVariableStore, run_id: str, parent_ts: str) -> Non
     assert stored.watermark is not None and stored.watermark.finished
 
 
+def assert_step_replies(thread: list[Any]) -> None:
+    """Exactly one reply per milestone, none for cleanup_tmp, no duplicates."""
+    steps = [m.text.split("*")[1] for m in thread if not m.broadcast and m.text.count("*") >= 2]
+    assert sorted(steps) == sorted(
+        ["Parquet → Delta", "Geometry", "ID stability", "Regression checks"]
+    )
+
+
 def test_passing_run_posts_one_parent_and_keeps_the_variable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -138,9 +146,14 @@ def test_passing_run_posts_one_parent_and_keeps_the_variable(
     run_id = run(module, api, {}, "success")
 
     (parent,) = api.top_level(CHANNEL)
-    assert "Passed" in parent.text
-    # two sections of two milestones each, one icon per step; cleanup_tmp is not a milestone
-    assert parent.text.count(":white_check_mark::white_check_mark:") == 2
+    # two sections of two milestones each: one icon per step, exactly two per row, so a third
+    # icon in "Prepare" would mean cleanup_tmp (not a milestone) was rendered
+    rows = parent.text.splitlines()[1:3]
+    assert rows == [
+        ":white_check_mark::white_check_mark:  *Prepare* · Passed",
+        ":white_check_mark::white_check_mark:  *vs orders 2026.09.1* · Passed",
+    ]
+    assert_step_replies(api.replies(CHANNEL, parent.ts))
     (final,) = [m for m in api.replies(CHANNEL, parent.ts) if m.broadcast]
     assert "Passed" in final.text
     assert_kept(store, run_id, parent.ts)
@@ -156,6 +169,7 @@ def test_failing_run_ends_failed_with_an_alert(monkeypatch: pytest.MonkeyPatch) 
     (parent,) = api.top_level(CHANNEL)
     assert "Failed" in parent.text
     thread = api.replies(CHANNEL, parent.ts)
+    assert_step_replies([m for m in thread if not m.text.startswith("<@")])
     replies = [m.text for m in thread]
     alerts = [text for text in replies if text.startswith("<@U0123456789>")]
     (final,) = [m.text for m in thread if m.broadcast and m.text not in alerts]  # one final reply

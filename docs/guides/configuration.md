@@ -163,7 +163,7 @@ Found at `chappe.defaults.time`.
 
 ### `BudgetConfig`
 
-Time limits for Chappe's own work in one callback. Calls into Airflow are not bounded.
+Time limits for Chappe's own work in one callback. The deadline is checked before each Airflow call, but a call into Airflow, once started, is not bounded by it.
 
 Found at `chappe.defaults.budgets`.
 
