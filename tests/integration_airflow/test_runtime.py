@@ -88,7 +88,7 @@ def test_missing_config_disables_chappe_once(
 def test_an_unexpected_load_error_disables_chappe_once(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    def broken(path: Any = None) -> Any:
+    def broken(path: Any = None, **kwargs: Any) -> Any:
         raise RuntimeError("disk on fire")
 
     monkeypatch.setattr(runtime_module, "load_settings", broken)
@@ -150,3 +150,22 @@ def test_connection_info_holds_only_the_token_and_hides_it(
     assert [f.name for f in dataclasses.fields(info)] == ["password"]
     assert info.password == "xoxb-secret"
     assert "xoxb-secret" not in repr(info)
+
+
+@pytest.mark.usefixtures("fresh_runtime")
+def test_a_bad_process_is_dropped_with_one_error_and_the_others_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    text = CONFIG + "    billing:\n      dags: [{dag_id: billing}]\n      channel: '#billing'\n"
+    monkeypatch.setenv("CHAPPE_CONFIG", str(write_config(tmp_path, text)))
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        runtime = runtime_module.get_runtime()
+        assert runtime_module.get_runtime() is runtime
+    assert runtime is not None
+    assert runtime.resolve(None, "orders") is not None
+    assert runtime.resolve(None, "billing") is None
+    (record,) = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert record.levelno == logging.ERROR
+    assert "process 'billing' is disabled" in record.getMessage()
+    assert "channel ID" in record.getMessage()
+    assert "chappe is disabled" not in caplog.text

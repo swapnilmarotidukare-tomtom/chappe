@@ -1,4 +1,5 @@
 # tests/config/test_config.py
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -188,3 +189,55 @@ def test_bad_token_overrides_are_rejected_at_load(tmp_path: Path) -> None:
     text = VALID + "      theme: {name: plain, tokens: {colours: {}}}\n"
     with pytest.raises(ChappeConfigError, match=r"processes\.orders\.theme: unknown token section"):
         load_settings(write(tmp_path, text))
+
+
+def with_billing(billing: str) -> str:
+    """VALID plus a second process, `billing`, whose body is `billing`."""
+    return VALID + "    billing:\n      dags: [{dag_id: billing}]\n" + billing
+
+
+def drop_collector() -> tuple[list[tuple[str, str]], Callable[[str, str], None]]:
+    dropped: list[tuple[str, str]] = []
+
+    def collect(name: str, reason: str) -> None:
+        dropped.append((name, reason))
+
+    return dropped, collect
+
+
+@pytest.mark.parametrize(
+    ("billing", "reason"),
+    [
+        ("      channel: '#billing'\n", "channel ID"),
+        ("      channel: C0123456789\n      theme: {name: neon}\n", "unknown theme 'neon'"),
+    ],
+)
+def test_an_error_inside_one_process_drops_only_that_process(
+    tmp_path: Path, billing: str, reason: str
+) -> None:
+    """Spec 9.1: a bad process disables Chappe for its own DAG only."""
+    path = write(tmp_path, with_billing(billing))
+    dropped, collect = drop_collector()
+    settings = load_settings(path, on_process_error=collect)
+    assert list(settings.processes) == ["orders"]
+    ((name, why),) = dropped
+    assert name == "billing" and reason in why
+    with pytest.raises(ChappeConfigError, match="billing"):
+        load_settings(path)  # validate-config's strict path still fails
+
+
+@pytest.mark.parametrize(
+    "defaults", ["    theme: {name: neon}\n", "    time: {timezone: Mars/Base}\n"]
+)
+def test_an_error_in_defaults_still_disables_chappe(tmp_path: Path, defaults: str) -> None:
+    dropped, collect = drop_collector()
+    with pytest.raises(ChappeConfigError):
+        load_settings(write(tmp_path, with_defaults(defaults)), on_process_error=collect)
+    assert dropped == []
+
+
+def test_an_error_at_the_top_level_still_disables_chappe(tmp_path: Path) -> None:
+    dropped, collect = drop_collector()
+    with pytest.raises(ChappeConfigError, match="enabeld"):
+        load_settings(write(tmp_path, VALID + "  enabeld: true\n"), on_process_error=collect)
+    assert dropped == []

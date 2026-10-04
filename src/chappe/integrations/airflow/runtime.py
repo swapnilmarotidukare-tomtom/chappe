@@ -130,13 +130,18 @@ def set_runtime(runtime: Runtime | None) -> None:
     _runtime, _loaded = runtime, runtime is not None
 
 
+def _drop_process(name: str, problem: str) -> None:
+    """Spec 9.1: a config error inside one process disables Chappe for that process only."""
+    log.error("chappe: process %r is disabled: %s", name, problem)
+
+
 def get_runtime() -> Runtime | None:
     global _runtime, _loaded
     if _loaded:
         return _runtime
     _loaded = True
     try:
-        _runtime = Runtime(load_settings())
+        _runtime = Runtime(load_settings(on_process_error=_drop_process))
     except Exception as exc:  # a config error, or anything else: never raise into Airflow
         log.error("chappe is disabled: %s", exc)
         _runtime = None

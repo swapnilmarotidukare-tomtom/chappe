@@ -60,7 +60,7 @@ Check each scenario in the test channel. After every run, also check:
 | Cleared task after finish | after a passing run, clear `compare.regression` in that run (UI: task → Clear, without downstream) | Known limit: the message keeps showing "Passed" while the task runs again. It shows the new final status only when the run finishes again |
 | Cleanup (dry run) | `airflow variables list \| grep chappe__`, then `chappe cleanup --older-than 1h --dry-run` | The list shows one `chappe__chappe_example__…` Variable per run above. The dry run lists none (they are new) and deletes nothing |
 | Kill switch | restart with `CHAPPE_ENABLED=false`, trigger | No message; the run is unaffected |
-| Bad config | set `channel: "#test"`, restart, trigger | No message; the log says "chappe is disabled" with the reason; the run is unaffected |
+| Bad config | set `channel: "#test"`, restart, trigger | No message for this process; the log says "chappe: process '<name>' is disabled" with the reason (an error in `defaults` says "chappe is disabled"); the run is unaffected |
 
 ## 5. Catch process-name typos before deploy
 
