@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from chappe.core.messages import Alert, MessageSet, ParentMessage, ThreadEntry
 from chappe.core.model import ProcessState, StepState
-from chappe.core.render import RenderContext, clip
+from chappe.core.render import RenderContext, clip, step_counts
 from chappe.core.view import Link, ProcessView, SectionView, StepView
 
 
@@ -17,25 +17,6 @@ def _entry_due(step: StepView, view: ProcessView) -> bool:
 
 def _links(links: tuple[Link, ...], ctx: RenderContext) -> str:
     return " · ".join(ctx.fmt.link(link.url, link.label) for link in links)
-
-
-def _counts(section: SectionView, ctx: RenderContext) -> str:
-    """A failed run's row: "3 passed · 1 failed", then skipped and not run when non-zero."""
-    states = [step.state for step in section.steps]
-    passed = states.count(StepState.SUCCEEDED)
-    failed = states.count(StepState.FAILED)
-    skipped = states.count(StepState.SKIPPED)
-    not_run = len(states) - passed - failed - skipped
-    words = ctx.tokens.extra
-    parts = [
-        f"{passed} {words.get('passed', 'passed')}",
-        f"{failed} {words.get('failed', 'failed')}",
-    ]
-    if skipped:
-        parts.append(f"{skipped} {words.get('skipped', 'skipped')}")
-    if not_run:
-        parts.append(f"{not_run} {words.get('not_run', 'not run')}")
-    return " · ".join(parts)
 
 
 class ThreadTheme:
@@ -62,7 +43,7 @@ class ThreadTheme:
                 detail = self._detail(section, ctx)
                 lines.append(f"{icons}  {ctx.fmt.bold(section.title)} · {detail}")
             elif view.state is ProcessState.FAILED:
-                lines.append(f"{icons}  {_counts(section, ctx)}")
+                lines.append(f"{icons}  {step_counts(section.steps, ctx)}")
             else:
                 finished = sum(1 for step in section.steps if step.state.finished)
                 lines.append(f"{icons}  {finished}/{len(section.steps)} {steps_word}")

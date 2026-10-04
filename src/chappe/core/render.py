@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, tzinfo
 from typing import Protocol
 
 from chappe.core.model import ProcessState, StepState
+from chappe.core.view import StepView
 
 
 class Formatter(Protocol):
@@ -72,3 +73,22 @@ class RenderContext:
 
     def text(self, value: str) -> str:
         return self.fmt.escape(value)
+
+
+def step_counts(steps: Sequence[StepView], ctx: RenderContext) -> str:
+    """A failed run's count line: "3 passed · 1 failed", then skipped and not run when non-zero."""
+    states = [step.state for step in steps]
+    passed = states.count(StepState.SUCCEEDED)
+    failed = states.count(StepState.FAILED)
+    skipped = states.count(StepState.SKIPPED)
+    not_run = len(states) - passed - failed - skipped
+    words = ctx.tokens.extra
+    parts = [
+        f"{passed} {words.get('passed', 'passed')}",
+        f"{failed} {words.get('failed', 'failed')}",
+    ]
+    if skipped:
+        parts.append(f"{skipped} {words.get('skipped', 'skipped')}")
+    if not_run:
+        parts.append(f"{not_run} {words.get('not_run', 'not run')}")
+    return " · ".join(parts)

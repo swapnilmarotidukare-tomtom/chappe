@@ -9,7 +9,7 @@ from typing import ClassVar
 
 from chappe.core.messages import Alert, MessageSet, ParentMessage, ThreadEntry
 from chappe.core.model import ProcessState
-from chappe.core.render import RenderContext, clip
+from chappe.core.render import RenderContext, clip, step_counts
 from chappe.core.view import ProcessView
 
 
@@ -19,8 +19,11 @@ class PlainTheme:
     def render(self, view: ProcessView, ctx: RenderContext) -> MessageSet:
         done, total = view.progress
         status = f"{ctx.icon(view.state)} {ctx.label(view.state)}"
-        steps_word = ctx.tokens.extra.get("steps", "steps")
-        parent = f"{ctx.fmt.bold(view.title)} · {status} · {done}/{total} {steps_word}"
+        if view.state is ProcessState.FAILED:
+            progress = step_counts(view.steps, ctx)
+        else:
+            progress = f"{done}/{total} {ctx.tokens.extra.get('steps', 'steps')}"
+        parent = f"{ctx.fmt.bold(view.title)} · {status} · {progress}"
         if view.links:
             parent += " · " + " · ".join(ctx.fmt.link(link.url, link.label) for link in view.links)
         fallback = f"{view.title}: {ctx.label(view.state)} ({done}/{total})"

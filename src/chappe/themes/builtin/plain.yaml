@@ -12,3 +12,7 @@ labels:
   skipped: "Skipped"
 extra:
   steps: "steps"
+  passed: "passed"
+  failed: "failed"
+  skipped: "skipped"
+  not_run: "not run"

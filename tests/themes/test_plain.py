@@ -4,6 +4,7 @@ from datetime import timedelta
 import pytest
 
 from chappe.core.messages import MessageSet
+from chappe.core.model import ProcessState, StepState
 from chappe.themes import THEMES
 from chappe.themes.builtin.plain import PlainTheme
 from tests.support.samples import (
@@ -11,6 +12,7 @@ from tests.support.samples import (
     SAMPLES,
     SINGLE_SECTION_SAMPLES,
     TEST_MENTION,
+    ProcessViewBuilder,
     default_context,
 )
 
@@ -70,3 +72,39 @@ def test_failed_alert_names_the_failed_step() -> None:
 def test_dag_supplied_text_is_escaped() -> None:
     text = render("unicode_long").parent.text
     assert "&lt;orders&gt;" in text and "<orders>" not in text
+
+
+# Owner's Phase 2 decision: failed runs count steps per state, like the thread theme.
+
+
+def status_line(name: str) -> str:
+    return render(name).parent.text
+
+
+def test_failed_run_counts_steps_per_state_instead_of_done_over_total() -> None:
+    assert " · :x: Failed · 1 passed · 1 failed · 1 not run · " in status_line("single_failed")
+    view = (
+        ProcessViewBuilder()
+        .section("Main")
+        .step("Extract", StepState.SUCCEEDED, timed=False)
+        .step("Backfill", StepState.SKIPPED, timed=False)
+        .step("Transform", StepState.SUCCEEDED, timed=False)
+        .step("Load", StepState.FAILED, timed=False)
+        .finished(ProcessState.FAILED)
+        .build()
+    )
+    text = PlainTheme().render(view, default_context("plain")).parent.text
+    assert " · :x: Failed · 2 passed · 1 failed · 1 skipped · " in text
+    assert "steps" not in text
+
+
+def test_failed_multi_section_run_counts_the_whole_run() -> None:
+    text = status_line("multi_failed")
+    assert " · :x: Failed · 4 passed · 1 failed · " in text
+    assert "steps" not in text
+
+
+@pytest.mark.parametrize("name", ["single_running", "single_passed", "with_skipped", "pending"])
+def test_runs_that_did_not_fail_keep_done_over_total(name: str) -> None:
+    done, total = SAMPLES[name].progress
+    assert f" · {done}/{total} steps" in status_line(name)

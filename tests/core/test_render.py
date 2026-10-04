@@ -2,7 +2,15 @@
 from datetime import datetime, timedelta, timezone
 
 from chappe.core.model import ProcessState, StepState
-from chappe.core.render import Limits, RenderContext, Tokens, clip, format_duration
+from chappe.core.render import (
+    Limits,
+    RenderContext,
+    Tokens,
+    clip,
+    format_duration,
+    step_counts,
+)
+from chappe.core.view import StepView
 
 
 class EchoFormatter:
@@ -52,3 +60,30 @@ def test_render_context_helpers() -> None:
     assert ctx.duration(None) == ""
     assert ctx.clock(datetime(2026, 10, 2, 13, 35, tzinfo=timezone.utc)) == "13:35"
     assert ctx.text("<x>") == "&lt;x>"
+
+
+def _steps(*states: StepState) -> tuple[StepView, ...]:
+    return tuple(StepView(f"s{i}", f"Step {i}", state) for i, state in enumerate(states))
+
+
+def test_step_counts_orders_passed_failed_skipped_not_run_and_omits_zero_extras() -> None:
+    ctx = RenderContext(tokens=TOKENS, fmt=EchoFormatter(), tz=timezone.utc)
+    S, F, K, P, R = (
+        StepState.SUCCEEDED,
+        StepState.FAILED,
+        StepState.SKIPPED,
+        StepState.PENDING,
+        StepState.RUNNING,
+    )
+    assert step_counts(_steps(S, F, P), ctx) == "1 passed · 1 failed · 1 not run"
+    assert step_counts(_steps(S, K, S, F), ctx) == "2 passed · 1 failed · 1 skipped"
+    assert step_counts(_steps(F, R, K, P), ctx) == "0 passed · 1 failed · 1 skipped · 2 not run"
+    assert step_counts(_steps(S, F), ctx) == "1 passed · 1 failed"
+
+
+def test_step_counts_uses_the_extra_tokens() -> None:
+    words = {"passed": "ok", "failed": "ko", "skipped": "sk", "not_run": "nr"}
+    tokens = Tokens(icons=TOKENS.icons, labels=TOKENS.labels, extra=words)
+    ctx = RenderContext(tokens=tokens, fmt=EchoFormatter(), tz=timezone.utc)
+    steps = _steps(StepState.SUCCEEDED, StepState.FAILED, StepState.SKIPPED, StepState.PENDING)
+    assert step_counts(steps, ctx) == "1 ok · 1 ko · 1 sk · 1 nr"
