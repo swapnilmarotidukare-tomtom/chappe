@@ -13,7 +13,7 @@ SECOND = "Regression vs baseline 2026.10.0"
 
 
 def footer(at: str) -> list[str]:
-    return ["", f":stopwatch: Last updated {at} UTC"]
+    return ["", f":stopwatch: Last updated: 2026-10-02 {at}:00 UTC"]
 
 
 def render(view: ProcessView, *, collapse: bool = False):  # type: ignore[no-untyped-def]
@@ -33,9 +33,9 @@ def test_registered_as_ledger() -> None:
 def test_running_single_section_has_no_section_line() -> None:
     # Geometry started at 09:23 (after Parquet's 78 min); now is 09:28
     assert parent(SAMPLES["single_running"]) == [
-        f":large_yellow_circle: *{LINK}* · In progress · 1h 23m · started 08:05",
+        f":large_yellow_circle: *{LINK}* · In progress · started 2026-10-02 08:05:00 UTC",
         ":white_check_mark: Parquet → Delta",
-        ":hourglass_flowing_sand: Geometry · running since 09:23",
+        ":hourglass_flowing_sand: Geometry · running since 2026-10-02 09:23:00 UTC",
         ":white_circle: Aggregates",
         *footer("09:28"),
     ]
@@ -48,13 +48,13 @@ def test_a_finished_step_with_its_own_times_shows_its_duration() -> None:
 
 def test_running_multi_section_lists_each_section_with_counts() -> None:
     assert parent(SAMPLES["multi_running"]) == [
-        f":large_yellow_circle: *{LINK}* · In progress · 5h 54m · started 08:05",
+        f":large_yellow_circle: *{LINK}* · In progress · started 2026-10-02 08:05:00 UTC",
         "*Prepare* · 3 of 3 done",
         ":white_check_mark: Parquet → Delta",
         ":white_check_mark: Geometry",
         ":white_check_mark: Aggregates",
         f"*{SECOND}* · 0 of 2 done",
-        ":hourglass_flowing_sand: ID stability · running since 13:54",
+        ":hourglass_flowing_sand: ID stability · running since 2026-10-02 13:54:00 UTC",
         ":white_circle: Regression",
         *footer("13:59"),
     ]
@@ -81,7 +81,7 @@ def test_collapse_shows_the_span_only_when_every_step_is_timed() -> None:
 def test_completed_run_lists_every_step() -> None:
     # 78 + 261 + 10 min of steps, then 5 min: ended 13:59
     assert parent(SAMPLES["single_passed"]) == [
-        f":large_green_circle: *{LINK}* · Completed in 5h 54m · started 08:05",
+        f":large_green_circle: *{LINK}* · Completed in 5h 54m · started 2026-10-02 08:05:00 UTC",
         ":white_check_mark: Parquet → Delta",
         ":white_check_mark: Geometry",
         ":white_check_mark: Aggregates",
@@ -91,7 +91,7 @@ def test_completed_run_lists_every_step() -> None:
 
 def test_failed_single_section_shows_counts_without_a_title() -> None:
     assert parent(SAMPLES["single_failed"]) == [
-        f":red_circle: *{LINK}* · Failed after 3h 34m · started 08:05",
+        f":red_circle: *{LINK}* · Failed after 3h 34m · started 2026-10-02 08:05:00 UTC",
         "1 completed · 1 failed · 1 not run",
         ":white_check_mark: Parquet → Delta",
         ":x: Geometry · Failed",
@@ -111,7 +111,8 @@ def test_failed_multi_section_lists_only_the_failing_section() -> None:
 
 
 def test_pending_says_waiting_without_a_duration() -> None:
-    assert parent(SAMPLES["pending"])[0] == f":white_circle: *{LINK}* · Waiting · started 08:05"
+    waiting = f":white_circle: *{LINK}* · Waiting · started 2026-10-02 08:05:00 UTC"
+    assert parent(SAMPLES["pending"])[0] == waiting
 
 
 def test_title_without_a_link_is_plain_bold() -> None:
@@ -171,7 +172,8 @@ def test_no_alert_unless_failed() -> None:
 
 def test_names_are_escaped() -> None:
     view = ProcessViewBuilder().section("Main").step("A & <b>", R).build()
-    assert parent(view)[1] == ":hourglass_flowing_sand: A &amp; &lt;b&gt; · running since 08:05"
+    since = "running since 2026-10-02 08:05:00 UTC"
+    assert parent(view)[1] == f":hourglass_flowing_sand: A &amp; &lt;b&gt; · {since}"
 
 
 def test_a_failed_step_with_its_own_times_gets_its_duration_and_error_in_the_thread() -> None:
@@ -266,7 +268,8 @@ def test_last_updated_is_always_utc_whatever_the_configured_timezone() -> None:
 
     ctx = replace(default_context("ledger"), tz=timezone(timedelta(hours=5, minutes=30)))
     lines = LedgerTheme().render(SAMPLES["single_running"], ctx).parent.text.split("\n")
-    assert lines[0].endswith("· started 13:35")  # the run's start follows the config timezone
+    # the run's start follows the config timezone
+    assert lines[0].endswith("· started 2026-10-02 13:35:00 UTC+05:30")
     assert lines[-2:] == footer("09:28")  # the footer stays in UTC
 
 

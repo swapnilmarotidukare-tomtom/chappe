@@ -1,5 +1,5 @@
 === parent ===
-:large_yellow_circle: *<https://airflow.invalid/dags/orders/runs/run_1|fifty steps>* · In progress · 1h 45m · started 08:05
+:large_yellow_circle: *<https://airflow.invalid/dags/orders/runs/run_1|fifty steps>* · In progress · started 2026-10-02 08:05:00 UTC
 *Section 1* · 10 of 10 done
 :white_check_mark: Step 1.1
 :white_check_mark: Step 1.2
@@ -23,7 +23,7 @@
 :white_check_mark: Step 2.9
 :white_check_mark: Step 2.10
 *Section 3* · 0 of 10 done
-:hourglass_flowing_sand: Step 3.1 · running since 09:45
+:hourglass_flowing_sand: Step 3.1 · running since 2026-10-02 09:45:00 UTC
 :white_circle: Step 3.2
 :white_circle: Step 3.3
 :white_circle: Step 3.4
@@ -56,7 +56,7 @@
 :white_circle: Step 5.9
 :white_circle: Step 5.10
 
-:stopwatch: Last updated 09:50 UTC
+:stopwatch: Last updated: 2026-10-02 09:50:00 UTC
 === thread ===
 [step:section_3.step_3_1:started] STARTED: *Step 3.1*
 === alerts ===

@@ -1,10 +1,10 @@
 === parent ===
-:large_yellow_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · In progress · 1h 23m · started 08:05
+:large_yellow_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · In progress · started 2026-10-02 08:05:00 UTC
 :white_check_mark: Parquet → Delta
-:hourglass_flowing_sand: Geometry · running since 09:23
+:hourglass_flowing_sand: Geometry · running since 2026-10-02 09:23:00 UTC
 :white_circle: Aggregates
 
-:stopwatch: Last updated 09:28 UTC
+:stopwatch: Last updated: 2026-10-02 09:28:00 UTC
 === thread ===
 [step:main.geometry:started] STARTED: *Geometry*
 === alerts ===

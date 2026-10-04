@@ -1,10 +1,10 @@
 === parent ===
-:large_green_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · Completed in 1h 33m · started 08:05
+:large_green_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · Completed in 1h 33m · started 2026-10-02 08:05:00 UTC
 :white_check_mark: Parquet → Delta
 :fast_forward: Backfill · Skipped
 :white_check_mark: Aggregates
 
-:stopwatch: Last updated 09:38 UTC
+:stopwatch: Last updated: 2026-10-02 09:38:00 UTC
 === thread ===
 [step:main.parquet_delta:succeeded] COMPLETED: *Parquet → Delta*
 [step:main.backfill:skipped] SKIPPED: *Backfill*

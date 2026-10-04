@@ -8,7 +8,7 @@ icons: Slack shows each reply's own time, and the reply says the step's status i
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from typing import ClassVar
 
 from chappe.core.messages import Alert, MessageSet, ParentMessage, ThreadEntry
@@ -17,6 +17,12 @@ from chappe.core.render import RenderContext, clip, step_counts
 from chappe.core.view import ProcessView, SectionView, StepView
 
 TITLE_CHARS = 200  # a title alone never eats the parent limit or cuts its link
+
+
+def _stamp(value: datetime, tz: tzinfo) -> str:
+    """A full timestamp with its zone, so nobody has to guess the day later."""
+    local = value.astimezone(tz)
+    return f"{local:%Y-%m-%d %H:%M:%S} {local.tzname() or local.strftime('%z')}"
 
 
 def _timed(step: StepView) -> bool:
@@ -64,8 +70,7 @@ class LedgerTheme:
             return []
         words = ctx.tokens.extra
         icon = ctx.fmt.icon(words.get("updated_icon", ""))
-        at = view.now.astimezone(timezone.utc).strftime("%H:%M")
-        line = f"{words.get('last_updated', 'Last updated')} {at} UTC"
+        line = f"{words.get('last_updated', 'Last updated')}: {_stamp(view.now, timezone.utc)}"
         return ["", f"{icon} {line}" if icon else line]
 
     def _lines(self, blocks: list[_Block], cap: int | None, ctx: RenderContext) -> list[str]:
@@ -125,13 +130,11 @@ class LedgerTheme:
             phrase = f"{label} {words.get('in', 'in')} {took}"
         elif view.state is ProcessState.FAILED and took:
             phrase = f"{label} {words.get('after', 'after')} {took}"
-        elif view.state is ProcessState.RUNNING and took:
-            phrase = f"{label} · {took}"
-        else:
+        else:  # in progress: no elapsed time, it would freeze at the last edit
             phrase = label
         line = f"*{title}* · {phrase}"
         if view.started_at is not None:
-            line += f" · {words.get('started', 'started')} {ctx.clock(view.started_at)}"
+            line += f" · {words.get('started', 'started')} {_stamp(view.started_at, ctx.tz)}"
         return f"{mark} {line}" if mark else line
 
     def _section_line(self, section: SectionView, ctx: RenderContext) -> str:
@@ -162,7 +165,7 @@ class LedgerTheme:
         elif step.state is StepState.RUNNING:
             if step.started_at is not None:
                 since = words.get("running_since", "running since")
-                line += f" · {since} {ctx.clock(step.started_at)}"
+                line += f" · {since} {_stamp(step.started_at, ctx.tz)}"
             else:
                 line += f" · {words.get('running', 'running')}"
         elif step.state in (StepState.FAILED, StepState.SKIPPED):

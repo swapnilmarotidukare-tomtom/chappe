@@ -1,10 +1,10 @@
 === parent ===
-:red_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · Failed after 10h 24m · started 08:05
+:red_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · Failed after 10h 24m · started 2026-10-02 08:05:00 UTC
 *Regression vs baseline 2026.10.0* · 1 completed · 1 failed
 :white_check_mark: ID stability
 :x: Regression · Failed
 
-:stopwatch: Last updated 18:29 UTC
+:stopwatch: Last updated: 2026-10-02 18:29:00 UTC
 === thread ===
 [step:prepare.parquet_delta:succeeded] COMPLETED: *Parquet → Delta*
 [step:prepare.geometry:succeeded] COMPLETED: *Geometry*
