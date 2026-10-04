@@ -13,3 +13,8 @@ labels:
 extra:
   now: "Now"
   steps: "steps"
+  started: "started"
+  passed: "passed"
+  failed: "failed"
+  skipped: "skipped"
+  not_run: "not run"

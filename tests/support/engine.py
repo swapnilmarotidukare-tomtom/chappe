@@ -11,6 +11,7 @@ from chappe.core.engine import Engine, EngineSettings, HandleResult
 from chappe.core.events import ChappeEvent, EventKind
 from chappe.core.messages import MessageSet
 from chappe.core.model import ProcessState, StepState
+from chappe.core.render import RenderContext
 from chappe.core.view import ProcessView
 from chappe.ports.theme import Theme
 from chappe.ports.transport import Transport
@@ -112,13 +113,14 @@ def writer(
     clock: Callable[[], float] = _zero_clock,
     transport: Transport | None = None,
     event_budget_s: float = 10.0,
+    context: RenderContext = CTX,
 ) -> Writer:
     prepared = source if source is not None else PreparedSource()
     engine = Engine(
         source=prepared,
         theme=theme if theme is not None else PlainTheme(),
         fallback_theme=PlainTheme(),
-        context=CTX,
+        context=context,
         transport=transport if transport is not None else SlackTransport(api, clock=clock),
         store=store_for(variables, before_read),
         settings=EngineSettings(channel=CHANNEL, event_budget_s=event_budget_s),

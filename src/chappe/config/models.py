@@ -33,8 +33,7 @@ class StoreConfig(_Model):
 
 
 class ThemeConfig(_Model):
-    # Phase 1 default. Task 11 switches it to "thread" when the thread theme lands.
-    name: str = "plain"
+    name: str = "thread"
     tokens: dict[str, Any] | None = None
 
 

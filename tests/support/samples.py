@@ -30,8 +30,16 @@ def _slug(text: str) -> str:
 class ProcessViewBuilder:
     """Builds a ProcessView. Steps run one after another from BASE."""
 
-    def __init__(self, title: str = "orders 2026.10.1", key: str = "sample/run_1") -> None:
+    def __init__(
+        self,
+        title: str = "orders 2026.10.1",
+        key: str = "sample/run_1",
+        *,
+        known_start: bool = True,
+    ) -> None:
+        """`known_start=False` builds the minimal DAG-callback view: the run's start is unknown."""
         self._title = title
+        self._known_start = known_start
         self._key = key
         self._sections: list[tuple[str, str, list[StepView]]] = []
         self._cursor = BASE
@@ -93,7 +101,7 @@ class ProcessViewBuilder:
             key=self._key,
             title=self._title,
             state=state,
-            started_at=BASE,
+            started_at=BASE if self._known_start else None,
             ended_at=moment if state.finished else None,
             now=moment,
             sections=sections,

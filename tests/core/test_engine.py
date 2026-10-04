@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+from datetime import timedelta
 from typing import Any, ClassVar
 
 import pytest
@@ -18,9 +19,11 @@ from chappe.core.render import RenderContext
 from chappe.core.view import ProcessView
 from chappe.stores.airflow_variable import encode, key_for
 from chappe.themes.builtin.plain import PlainTheme
+from chappe.themes.builtin.thread import ThreadTheme
 from chappe.transports.slack.transport import EVENT_TYPE, SlackTransport
 from tests.support.engine import CHANNEL, CTX, KEY, PreparedSource, render, stage, store_for, writer
 from tests.support.fakes import FakeSlackApi, FakeVariables
+from tests.support.samples import ProcessViewBuilder, default_context
 
 S, P, R, F = StepState.SUCCEEDED, StepState.PENDING, StepState.RUNNING, StepState.FAILED
 
@@ -517,3 +520,82 @@ def test_a_final_event_out_of_budget_logs_an_error_with_the_process_key(
     (record,) = [r for r in caplog.records if "budget" in r.getMessage()]
     assert record.levelno == logging.WARNING  # a later event sends the rest
     assert "left to the next event" in record.getMessage()
+
+
+THREAD_CTX = default_context("thread")
+
+
+def parallel_run(
+    transform_timed: bool, load_timed: bool, *, finished: bool = False, later: int = 0
+) -> ProcessView:
+    """Transform and Load run in parallel; only the step whose callback fired carries times."""
+    builder = (
+        ProcessViewBuilder(key=KEY)
+        .section("Main")
+        .step("Extract", S, 10, timed=False)
+        .step("Transform", S, 261, timed=transform_timed)
+        .step("Load", S, 78, timed=load_timed)
+    )
+    if finished:
+        builder.step("Publish", S, 5, timed=False).finished(ProcessState.SUCCEEDED)
+    else:
+        builder.step("Publish", P)
+    view = builder.build()
+    return replace(view, now=view.now + timedelta(minutes=later))
+
+
+def thread_replies(api: FakeSlackApi, title: str) -> list[str]:
+    (parent,) = api.top_level(CHANNEL)
+    return [m.text for m in api.replies(CHANNEL, parent.ts) if f"*{title}*" in m.text]
+
+
+def test_thread_race_a_step_shown_finished_by_a_parallel_callback_waits_for_its_own() -> None:
+    """Owner's race: Load's callback arrives first and shows Transform succeeded, untimed."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    theme = ThreadTheme()
+    transform_key = "step:main.transform:succeeded"
+
+    load_first = parallel_run(transform_timed=False, load_timed=True)
+    assert writer(api, variables, theme=theme, context=THREAD_CTX).handle(load_first) is (
+        HandleResult.SENT
+    )
+    assert thread_replies(api, "Transform") == []
+    assert len(thread_replies(api, "Load")) == 1
+    saved = store_for(variables).load(KEY)
+    assert saved is not None and transform_key not in saved.sent_keys
+
+    own = parallel_run(transform_timed=True, load_timed=False, later=1)
+    assert writer(api, variables, theme=theme, context=THREAD_CTX).handle(own) is (
+        HandleResult.SENT
+    )
+    (reply,) = thread_replies(api, "Transform")
+    assert "4h 21m" in reply
+    saved = store_for(variables).load(KEY)
+    assert saved is not None and transform_key in saved.sent_keys
+
+    final = parallel_run(transform_timed=False, load_timed=False, finished=True)
+    writer(api, variables, theme=theme, context=THREAD_CTX).handle(final, EventKind.RUN_FINISHED)
+    assert thread_replies(api, "Transform") == [reply]  # never sent twice
+    assert len(thread_replies(api, "Load")) == 1
+
+
+def test_thread_race_fallback_a_lost_own_callback_is_covered_by_the_final_event() -> None:
+    """Transform's own callback never arrives: the final view sends its reply once, untimed."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    theme = ThreadTheme()
+    load_first = parallel_run(transform_timed=False, load_timed=True)
+    writer(api, variables, theme=theme, context=THREAD_CTX).handle(load_first)
+    assert thread_replies(api, "Transform") == []
+
+    final = parallel_run(transform_timed=False, load_timed=False, finished=True)
+    assert writer(api, variables, theme=theme, context=THREAD_CTX).handle(
+        final, EventKind.RUN_FINISHED
+    ) is (HandleResult.SENT)
+    (reply,) = thread_replies(api, "Transform")
+    assert reply.endswith(
+        "*Transform* · Passed · <https://airflow.invalid/dags/orders/runs/run_1/tasks/transform|Log>"
+    )
+    assert "4h 21m" not in reply
+    assert len(thread_replies(api, "Load")) == 1
+    saved = store_for(variables).load(KEY)
+    assert saved is not None and "step:main.transform:succeeded" in saved.sent_keys

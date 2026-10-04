@@ -47,7 +47,7 @@ def test_valid_config_loads_with_defaults(tmp_path: Path) -> None:
     assert settings.defaults.transport.type == "slack"
     assert settings.defaults.transport.connection_id == "chappe_slack"
     assert settings.defaults.ui_base_url is None
-    assert settings.theme_for(process).name == "plain"
+    assert settings.theme_for(process).name == "thread"
     assert process.milestones["cleanup"].hidden
     assert settings.process_for_dag("other") is None
 
