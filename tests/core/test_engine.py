@@ -718,7 +718,9 @@ def test_an_older_view_out_of_time_before_its_first_reply_is_skipped() -> None:
     writer(api, variables, theme=ThreadTheme(), context=THREAD_CTX).handle(load_first)
     calls = len(api.calls)
 
-    ticks = iter([0.0])  # the deadline is computed at 0s; every later reading is past it
+    # the deadline is computed at 0s and the snapshot and the store load start in time;
+    # every later reading is past it
+    ticks = iter([0.0, 0.0, 0.0])
     w = writer(
         api,
         variables,
@@ -729,3 +731,100 @@ def test_an_older_view_out_of_time_before_its_first_reply_is_skipped() -> None:
     own = parallel_run(transform_timed=True, load_timed=False, later=-1)
     assert w.handle(own) is HandleResult.SKIPPED
     assert len(api.calls) == calls
+
+
+class SlowSource(PreparedSource):
+    """The task-state read takes the whole budget."""
+
+    def __init__(self, now: list[float], to: float) -> None:
+        super().__init__()
+        self._now, self._to = now, to
+        self.calls = 0
+
+    def snapshot(self, event: ChappeEvent) -> ProcessView | None:
+        self.calls += 1
+        self._now[0] = self._to
+        return super().snapshot(event)
+
+
+def test_no_task_state_read_when_the_budget_is_already_spent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Spec 9.3: the deadline is checked before every call into Airflow, the first one too."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    ticks = iter([0.0])  # the deadline is computed at 0s; every later reading is past it
+    source = SlowSource([0.0], 0.0)
+    w = writer(api, variables, source=source, clock=lambda: next(ticks, 100.0))
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        assert w.handle(stage(R, P, P)) is HandleResult.OUT_OF_TIME
+    assert source.calls == 0 and api.calls == [] and variables.data == {}
+    assert "left to the next event" in caplog.text and "orders/run_1" in caplog.text
+
+
+def test_a_slow_task_state_read_stops_the_event_before_the_store(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    now, reads = [0.0], []
+    api, variables = FakeSlackApi(), FakeVariables()
+    w = writer(
+        api,
+        variables,
+        source=SlowSource(now, 11.0),  # past the 10s event budget
+        clock=lambda: now[0],
+        before_read=lambda: reads.append(1),
+    )
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        assert w.handle(stage(R, P, P)) is HandleResult.OUT_OF_TIME
+    assert reads == [] and api.calls == []
+    (record,) = [r for r in caplog.records if "time budget" in r.getMessage()]
+    assert record.levelno == logging.WARNING and KEY in record.getMessage()
+
+
+def test_a_final_event_out_of_time_before_the_store_logs_an_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    now = [0.0]
+    api, variables = FakeSlackApi(), FakeVariables()
+    w = writer(api, variables, source=SlowSource(now, 31.0), clock=lambda: now[0])
+    final = stage(S, S, S, finished=ProcessState.SUCCEEDED)
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        assert w.handle(final, EventKind.RUN_FINISHED) is HandleResult.OUT_OF_TIME
+    assert api.calls == []
+    (record,) = [r for r in caplog.records if "final event" in r.getMessage()]
+    assert record.levelno == logging.ERROR and KEY in record.getMessage()
+
+
+def test_a_slow_store_read_skips_a_save_that_records_no_slack_call() -> None:
+    """The watermark-only save is skipped once the budget is spent; Slack is untouched."""
+    now = [0.0]
+    api, variables = FakeSlackApi(), FakeVariables()
+    w = writer(api, variables, clock=lambda: now[0])
+    first = stage(S, R, P)
+    w.handle(first)
+    before = variables.data[key_for(KEY)]
+    calls = len(api.calls)
+
+    def slow_read() -> None:
+        now[0] = 11.0  # the load took the whole 10s budget
+
+    later = replace(first, now=first.now + timedelta(minutes=1))  # same text, newer watermark
+    slow = writer(api, variables, clock=lambda: now[0], before_read=slow_read)
+    assert slow.handle(later) is HandleResult.OUT_OF_TIME
+    assert variables.data[key_for(KEY)] == before
+    assert len(api.calls) == calls
+
+
+def test_a_save_that_records_a_slack_post_is_made_even_past_the_deadline() -> None:
+    """Skipping it would leave the post untracked: the next event would post it again."""
+    now = [0.0]
+    api, variables = FakeSlackApi(), FakeVariables()
+
+    def slow_post(channel: str, thread_ts: str | None) -> None:
+        now[0] = 11.0  # the parent post used up the budget
+
+    api.before_post = slow_post
+    w = writer(api, variables, clock=lambda: now[0])
+    w.handle(stage(R, P, P))
+    (parent,) = api.top_level(CHANNEL)
+    saved = store_for(variables).load(KEY)
+    assert saved is not None and saved.parent_ref == parent.ts

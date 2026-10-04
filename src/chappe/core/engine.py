@@ -32,8 +32,18 @@ class HandleResult(str, Enum):
     SKIPPED = "skipped"
     DEGRADED = "degraded"
     YIELDED = "yielded"  # another event's newer render owns the parent
+    OUT_OF_TIME = "out_of_time"  # the budget ran out before a call into Airflow
     SENT = "sent"
     ERROR = "error"
+
+
+class _OutOfTime(Exception):
+    """The event's deadline passed before a call into Airflow (spec 9.3)."""
+
+    def __init__(self, key: str | None, before: str) -> None:
+        super().__init__(before)
+        self.key = key
+        self.before = before
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +106,9 @@ class Engine:
                 final = event.kind is EventKind.RUN_FINISHED
                 budget = self._settings.final_budget_s if final else self._settings.event_budget_s
                 result = self._handle(event, final, self._clock() + budget)
+        except _OutOfTime as exc:
+            self._out_of_time(exc, event, final)
+            result = HandleResult.OUT_OF_TIME
         except Exception:
             log.exception(
                 "chappe: event failed (process %s, run %s)",
@@ -106,6 +119,42 @@ class Engine:
         self._metric(f"chappe.events.{result.value}")
         return result
 
+    def _out_of_time(self, exc: _OutOfTime, event: ChappeEvent, final: bool) -> None:
+        key = exc.key if exc.key is not None else f"{event.dag_id}/{event.run_id}"
+        if final:  # no event follows the final one
+            log.error(
+                "chappe: out of time on the final event for %s before %s; "
+                "the final message may be missing or incomplete",
+                key,
+                exc.before,
+            )
+        else:
+            log.warning(
+                "chappe: time budget spent for %s before %s; the rest is left to the next event",
+                key,
+                exc.before,
+            )
+        self._metric("chappe.budget_spent")
+
+    def _in_time(self, deadline: float, key: str | None, before: str) -> None:
+        """Calls into Airflow have no Chappe-side timeout: never start one after the deadline."""
+        if self._clock() >= deadline:
+            raise _OutOfTime(key, before)
+
+    def _load(self, key: str, deadline: float) -> SentState | None:
+        self._in_time(deadline, key, "reading the store")
+        return self._store.load(key)
+
+    def _save(self, key: str, state: SentState, deadline: float) -> SentState:
+        """Save what no Slack call depends on; skipped once the deadline has passed."""
+        self._in_time(deadline, key, "writing the store")
+        return self._store.save(key, state)
+
+    def _record(self, key: str, state: SentState) -> SentState:
+        """Save a Slack call that was made. Never skipped for time: an untracked post would be
+        posted again by the next event (silence over a duplicate)."""
+        return self._store.save(key, state)
+
     def _metric(self, name: str) -> None:
         """Count `name`. A failing metrics hook is logged and never changes what Chappe does."""
         try:
@@ -114,10 +163,11 @@ class Engine:
             log.exception("chappe: metrics hook failed (%s)", name)
 
     def _handle(self, event: ChappeEvent, final: bool, deadline: float) -> HandleResult:
+        self._in_time(deadline, None, "reading the task states")
         view = self._source.snapshot(event)
         if view is None:
             return HandleResult.NO_PROCESS
-        sent = self._store.load(view.key)
+        sent = self._load(view.key, deadline)
         if sent is not None and sent.degraded:
             return HandleResult.DEGRADED
         try:
@@ -133,7 +183,7 @@ class Engine:
         except TransportError as exc:
             if exc.retryable:
                 raise
-            self._mark_degraded(view, exc)
+            self._mark_degraded(view, exc, deadline)
             return HandleResult.DEGRADED
 
     def _render(self, view: ProcessView) -> MessageSet:
@@ -175,7 +225,7 @@ class Engine:
         replied, complete = self._send_replies(view, plan, state, deadline, final=final)
         if complete and not (replied or saved):
             # nothing changed in Slack; remember the watermark
-            self._store.save(key, SentState(key, watermark=wm))
+            self._save(key, SentState(key, watermark=wm), deadline)
         return HandleResult.SENT
 
     def _send_missing(
@@ -242,7 +292,7 @@ class Engine:
             self._transport.post_reply(
                 self._settings.channel, parent, reply, broadcast=broadcast, deadline=deadline
             )
-            state = self._store.save(
+            state = self._record(
                 key, SentState(key, watermark=wm, sent_keys=frozenset({reply_key}))
             )
             saved = True
@@ -257,10 +307,10 @@ class Engine:
             self._settings.channel, text, parent_payload(key, wm), deadline=deadline
         )
         claim = SentState(key, parent_ref=mine, parent_text=text, watermark=wm, parent_written=wm)
-        state = self._store.save(key, claim)
+        state = self._record(key, claim)
         # verify: without compare-and-set, a parallel stale write can drop `mine`
         for _ in range(2):
-            loaded = self._store.load(key)
+            loaded = self._load(key, deadline)
             if loaded is not None and mine in {
                 loaded.parent_ref,
                 *loaded.stale_parents,
@@ -269,7 +319,7 @@ class Engine:
                 state = loaded
                 break
             # the merge re-adds `mine`; the lowest ts still wins
-            state = self._store.save(key, claim)
+            state = self._record(key, claim)
         state = self._clear_stale(key, state, deadline)  # deletes `mine` when another parent won
         winner = state.parent_ref
         if winner is None or winner == mine:
@@ -292,7 +342,7 @@ class Engine:
         except TransportError as exc:
             if exc.code != MESSAGE_NOT_FOUND:
                 raise
-            current = self._store.load(key)
+            current = self._load(key, deadline)
             if current is None:
                 raise
             if current.parent_ref == ts:
@@ -300,12 +350,12 @@ class Engine:
                 # duplicate if one is left, else post a new parent
                 log.warning("chappe: the parent %s of %s was deleted; replacing it", ts, key)
                 self._metric("chappe.parent_replaced")
-                current = self._store.save(key, SentState(key, cleared_parents=frozenset({ts})))
+                current = self._save(key, SentState(key, cleared_parents=frozenset({ts})), deadline)
             if current.parent_ref is None:
                 return self._post_parent(key, text, wm, deadline)
             # a lower-ts parent won meanwhile and ours was deleted, or a duplicate took over
             return self._write_parent(key, current.parent_ref, text, wm, deadline)
-        return self._store.save(
+        return self._record(
             key, SentState(key, parent_ref=ts, parent_text=text, watermark=wm, parent_written=wm)
         )
 
@@ -330,7 +380,8 @@ class Engine:
         if not cleared:
             return state
         self._metric("chappe.duplicate_parent_deleted")
-        return self._store.save(key, SentState(key, cleared_parents=frozenset(cleared)))
+        # a delete that is not recorded is repeated by the next event and counts as done
+        return self._save(key, SentState(key, cleared_parents=frozenset(cleared)), deadline)
 
     def _final_check(self, view: ProcessView, messages: MessageSet, deadline: float) -> None:
         """Rule 3 (contract D3): read the store back once.
@@ -342,6 +393,9 @@ class Engine:
             log.warning("chappe: no time left to read back the final message for %s", view.key)
             return
         self._sleep(min(self._settings.final_check_delay_s, left))
+        if self._clock() >= deadline:
+            log.warning("chappe: no time left to read back the final message for %s", view.key)
+            return
         loaded = self._store.load(view.key)
         if loaded is None or loaded.parent_ref is None:
             return
@@ -354,9 +408,12 @@ class Engine:
         self._metric("chappe.final_repaired")
         self._write_parent(view.key, loaded.parent_ref, text, view.watermark, deadline)
 
-    def _mark_degraded(self, view: ProcessView, exc: TransportError) -> None:
+    def _mark_degraded(self, view: ProcessView, exc: TransportError, deadline: float) -> None:
         log.error("chappe: Slack refused (%s); stopping for process %s", exc.code, view.key)
         self._metric("chappe.degraded")
+        if self._clock() >= deadline:
+            log.warning("chappe: no time left to record the degraded state for %s", view.key)
+            return
         try:
             self._store.save(view.key, SentState(view.key, degraded=True))
         except Exception:
