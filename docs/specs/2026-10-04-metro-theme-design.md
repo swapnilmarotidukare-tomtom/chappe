@@ -109,9 +109,11 @@ the first and last stations of the trunk and of each section and replaces the st
 - `THEMES = {"metro": MetroTheme, "plain": PlainTheme}`.
 - `ThemeConfig.name` default `"metro"`, description "`metro` (default) or `plain` (the flat fallback)."; the
   configuration guide is regenerated.
-- A config naming `thread` (or any unknown theme): `chappe validate-config` fails with the existing message
-  "unknown theme 'thread'; available themes: metro, plain"; at run time the existing fallback applies (WARNING,
-  then `plain`).
+- A config naming `thread` (or any unknown theme) is rejected when the config loads (spec 9.1, existing
+  behaviour): `chappe validate-config` exits 1 with "unknown theme 'thread'; available themes: metro, plain". At
+  run time a bad `defaults.theme` makes the whole config invalid, so Chappe sends nothing and logs the error; a
+  bad `processes.<name>.theme` drops only that process. This is a breaking change for configs that name `thread`;
+  the CHANGELOG says so and tells users to remove the line or name `metro`.
 - Removed: `thread.py`, `thread.yaml`, `tests/themes/test_thread.py`, `thread__*.txt` snapshots, and every
   reference to the thread theme in docs, examples and tests.
 
