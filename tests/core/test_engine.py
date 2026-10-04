@@ -482,3 +482,33 @@ def test_logs_carry_the_process_key(caplog: pytest.LogCaptureFixture) -> None:
     theme_line = next(r for r in caplog.records if "theme 'broken' failed" in r.getMessage())
     assert KEY in delete_line.getMessage()
     assert KEY in theme_line.getMessage()
+
+
+def test_a_final_event_out_of_budget_logs_an_error_with_the_process_key(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Spec 9.3: no later event can correct the final one, so running out of budget is an error."""
+    now = [0.0]
+    api, variables = FakeSlackApi(), FakeVariables()
+
+    def slow_reply(channel: str, thread_ts: str | None) -> None:
+        if thread_ts is not None:
+            now[0] = 31.0  # the first reply used up the 30s final budget
+
+    api.before_post = slow_reply
+    w = writer(api, variables, theme=StepEntriesTheme(), clock=lambda: now[0])
+    final = stage(S, S, S, finished=ProcessState.SUCCEEDED)
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        assert w.handle(final, EventKind.RUN_FINISHED) is HandleResult.SENT
+    (record,) = [r for r in caplog.records if "budget" in r.getMessage()]
+    assert record.levelno == logging.ERROR and KEY in record.getMessage()
+
+    caplog.clear()
+    now[0] = 100.0
+    other_api, other_vars = FakeSlackApi(), FakeVariables()
+    other_api.before_post = lambda channel, ts: now.__setitem__(0, 111.0) if ts else None
+    w = writer(other_api, other_vars, theme=StepEntriesTheme(), clock=lambda: now[0])
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        w.handle(stage(S, S, R), EventKind.STEP_FINISHED)
+    (record,) = [r for r in caplog.records if "budget" in r.getMessage()]
+    assert record.levelno == logging.WARNING  # a later event sends the rest

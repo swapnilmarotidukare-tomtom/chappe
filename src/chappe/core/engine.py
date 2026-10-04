@@ -126,7 +126,7 @@ class Engine:
             if not write_allowed(view.watermark, sent):
                 return HandleResult.SKIPPED
             messages = self._render(view)
-            result = self._apply(view, messages, sent, deadline)
+            result = self._apply(view, messages, sent, deadline, final=final)
             if final and result is HandleResult.SENT:
                 self._final_check(view, messages, deadline)
             return result
@@ -147,7 +147,13 @@ class Engine:
             return self._fallback.render(view, self._ctx)
 
     def _apply(
-        self, view: ProcessView, messages: MessageSet, sent: SentState | None, deadline: float
+        self,
+        view: ProcessView,
+        messages: MessageSet,
+        sent: SentState | None,
+        deadline: float,
+        *,
+        final: bool = False,
     ) -> HandleResult:
         key, wm = view.key, view.watermark
         text = messages.parent.text
@@ -172,11 +178,14 @@ class Engine:
             if reply_key in state.sent_keys:
                 continue  # a parallel event sent it meanwhile
             if self._clock() >= deadline:
-                # never block (spec 9.3): what was sent is saved, the next event sends the rest
-                log.warning(
-                    "chappe: time budget spent for %s; %d message(s) left to the next event",
+                # never block (spec 9.3): what was sent is saved, the next event sends the rest;
+                # no event follows the final one, so there it is an error
+                log.log(
+                    logging.ERROR if final else logging.WARNING,
+                    "chappe: time budget spent for %s; %d message(s) left to the next event%s",
                     key,
                     len(replies) - index,
+                    " (this was the final event, so they are not sent)" if final else "",
                 )
                 self._metric("chappe.budget_spent")
                 return HandleResult.SENT
