@@ -16,7 +16,7 @@
 
 ## 0.0.1 (2026-10-04)
 
-- Wheel: `releases/chappe-0.0.1-py3-none-any.whl` at tag `v0.0.1`, SHA256 `52986b82538887e81f0532fb2a75bccbf89a46368690dfb0678385795a72e41c`.
+- Wheel: `releases/chappe-0.0.1-py3-none-any.whl` at tag `v0.0.1`, SHA256 `e1fea5024f0cec68fc610c7bbb6a12c3069306020d57a2278f2aa3fab9f4849a`.
 
 - One live Slack message per Airflow DAG run, edited in place, with step history in its thread.
 - `@milestone` decorator and `ChappeNotifier` (notifier mode). Requires Airflow 3.2.x.
