@@ -350,10 +350,10 @@ def test_final_read_back_waits_only_for_the_time_left() -> None:
     w.handle(stage(S, R, P))
     final = stage(S, S, S, finished=ProcessState.SUCCEEDED)
 
-    def time_passes(channel: str, thread_ts: str | None) -> None:
-        now[0] = 129.5  # the final budget (30s from 100.0) has 0.5s left
+    def time_passes(key: str, value: str) -> None:
+        now[0] = 129.5  # the parent write left 0.5s of the final budget (30s from 100.0)
 
-    api.before_post = time_passes
+    variables.before_set = time_passes
     assert w.handle(final, EventKind.RUN_FINISHED) is HandleResult.SENT
     assert sleeps == [0.5]
 
@@ -371,14 +371,11 @@ def test_final_read_back_is_skipped_when_the_budget_is_spent() -> None:
     w = writer(api, variables, clock=lambda: now[0], sleep=sleeps.append, before_read=count_read)
     w.handle(stage(S, R, P))
 
-    def time_runs_out(channel: str, thread_ts: str | None) -> None:
+    def time_runs_out_at_the_parent_write(key: str, value: str) -> None:
         now[0] = 131.0  # past the final budget (30s from 100.0)
-
-    def note_write(key: str, value: str) -> None:
         reads_at_last_write[:] = [len(reads)]
 
-    api.before_post = time_runs_out
-    variables.before_set = note_write
+    variables.before_set = time_runs_out_at_the_parent_write
     final = stage(S, S, S, finished=ProcessState.SUCCEEDED)
     assert w.handle(final, EventKind.RUN_FINISHED) is HandleResult.SENT
     assert sleeps == []

@@ -221,12 +221,31 @@ class Engine:
                 return HandleResult.YIELDED
             state, saved = posted, True
 
+        if final:
+            state = self._settle(key, state, deadline)
         plan = plan_sends(messages, state)
         replied, complete = self._send_replies(view, plan, state, deadline, final=final)
         if complete and not (replied or saved):
             # nothing changed in Slack; remember the watermark
             self._save(key, SentState(key, watermark=wm), deadline)
         return HandleResult.SENT
+
+    def _settle(self, key: str, state: SentState, deadline: float) -> SentState:
+        """The final event waits its check delay after writing the parent, then re-reads the store
+        before posting its thread entries (spec 7, step 9).
+
+        The last task's own callback is often posting its timed reply at this moment; waiting lets
+        it land first, so the final event neither repeats it untimed nor broadcasts the result
+        above it.
+        """
+        left = deadline - self._clock()
+        if left <= 0:
+            return state  # the replies log the error
+        self._sleep(min(self._settings.final_check_delay_s, left))
+        if self._clock() >= deadline:
+            return state
+        loaded = self._load(key, deadline)
+        return loaded if loaded is not None else state
 
     def _send_missing(
         self, view: ProcessView, sent: SentState, deadline: float, *, final: bool
@@ -267,8 +286,6 @@ class Engine:
         replies = [(e.key, e.text, e.broadcast) for e in plan.entries]
         replies += [(a.key, a.text, False) for a in plan.alerts]
         for index, (reply_key, reply, broadcast) in enumerate(replies):
-            if reply_key in state.sent_keys:
-                continue  # a parallel event sent it meanwhile
             if self._clock() >= deadline:
                 # never block (spec 9.3): what was sent is saved, the next event sends the rest
                 if final:  # no event follows the final one
@@ -286,6 +303,11 @@ class Engine:
                     )
                 self._metric("chappe.budget_spent")
                 return saved, False
+            current = self._load(key, deadline)  # a parallel event may have sent it meanwhile
+            if current is not None:
+                state = current
+            if reply_key in state.sent_keys:
+                continue
             parent = state.parent_ref
             if parent is None:
                 raise StoreError(f"no parent message stored for {key}")
@@ -401,15 +423,11 @@ class Engine:
         return self._save(key, SentState(key, cleared_parents=frozenset(cleared)), deadline)
 
     def _final_check(self, view: ProcessView, messages: MessageSet, deadline: float) -> None:
-        """Rule 3 (contract D3): read the store back once.
+        """Rule 3 (contract D3): read the store back once, after the check delay (spent before the
+        thread entries, see `_settle`).
 
         Rewrite the parent if a late writer edited it after us.
         """
-        left = deadline - self._clock()
-        if left <= 0:
-            log.warning("chappe: no time left to read back the final message for %s", view.key)
-            return
-        self._sleep(min(self._settings.final_check_delay_s, left))
         if self._clock() >= deadline:
             log.warning("chappe: no time left to read back the final message for %s", view.key)
             return
