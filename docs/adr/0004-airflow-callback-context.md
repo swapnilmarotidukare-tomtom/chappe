@@ -1,6 +1,6 @@
 # ADR-0004: Read Airflow state through the Task SDK runtime
 
-Status: Proposed (pending the review gate after the 0.0.1 spike)
+Status: Accepted (2026-10-04)
 
 ## Context
 
