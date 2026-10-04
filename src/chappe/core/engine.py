@@ -476,7 +476,9 @@ class Engine:
         """Rule 3 (contract D3): read the store back once, after the check delay (spent before the
         thread entries, see `_settle`).
 
-        Rewrite the parent if a late writer edited it after us.
+        The final text is written to the stored parent once more, whatever the store says: the
+        store is not Slack (a late edit whose save failed, or a winner that changed, leaves them
+        apart), and the edit is idempotent. It is skipped only when a newer render is stored.
         """
         if self._clock() >= deadline:
             log.warning("chappe: no time left to read back the final message for %s", view.key)
@@ -485,12 +487,9 @@ class Engine:
         if loaded is None or loaded.parent_ref is None:
             return
         text, written = messages.parent.text, loaded.parent_written
-        if loaded.parent_text == text or (
-            written is not None and not view.watermark.newer_than(written)
-        ):
-            return
-        log.warning("chappe: repairing a late overwrite of the final message for %s", view.key)
-        self._metric("chappe.final_repaired")
+        if loaded.parent_text != text and (written is None or view.watermark.newer_than(written)):
+            log.warning("chappe: repairing a late overwrite of the final message for %s", view.key)
+            self._metric("chappe.final_repaired")
         self._write_parent(view.key, loaded.parent_ref, text, view.watermark, deadline)
 
     def _mark_degraded(self, view: ProcessView, exc: TransportError, deadline: float) -> None:

@@ -392,7 +392,7 @@ def test_run_finished_gets_the_final_budget_and_other_events_the_event_budget() 
     assert w.handle(stage(S, R, P), EventKind.STEP_FINISHED) is HandleResult.SENT
     final = stage(S, S, S, finished=ProcessState.SUCCEEDED)
     assert w.handle(final, EventKind.RUN_FINISHED) is HandleResult.SENT
-    assert transport.deadlines == [1010.0, 1010.0, 1030.0]
+    assert transport.deadlines == [1010.0, 1010.0, 1030.0, 1030.0]  # the read-back re-writes
 
 
 def test_a_hand_deleted_parent_is_replaced_by_a_new_one() -> None:
@@ -939,3 +939,23 @@ def test_a_failed_cleanup_of_an_unsaved_claim_keeps_the_store_error(
         assert writer(api, variables).handle(stage(R, P, P)) is HandleResult.ERROR
     assert "could not delete the unsaved parent" in caplog.text
     assert "metadata database down" in caplog.text
+
+
+def test_final_read_back_rewrites_the_parent_even_when_the_store_looks_right() -> None:
+    """Review m-3: the store is not Slack. A late edit whose save never landed leaves the store
+    showing the final text while Slack shows the older one; the read-back re-issues the final
+    text once."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    final = stage(S, S, S, finished=ProcessState.SUCCEEDED)
+    shared = store_for(variables)
+
+    def late_edit_without_save(seconds: float) -> None:
+        current = shared.load(KEY)
+        assert current is not None and current.parent_ref is not None
+        api.update(CHANNEL, current.parent_ref, render(stage(S, S, R)).parent.text)
+
+    w = writer(api, variables, sleep=late_edit_without_save)
+    w.handle(stage(S, R, P))
+    assert w.handle(final, EventKind.RUN_FINISHED) is HandleResult.SENT
+    (parent,) = api.top_level(CHANNEL)
+    assert parent.text == render(final).parent.text
