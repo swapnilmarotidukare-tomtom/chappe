@@ -110,9 +110,12 @@ def run(module: ModuleType, api: FakeSlackApi, conf: dict[str, Any], reason: str
     # What the task callbacks (@milestone) left during dag.test(): a parent, not yet final.
     assert any(name == "post" for name, _ in api.calls)
     (parent,) = api.top_level(CHANNEL)
-    assert "In progress" in parent.text
-    assert "Passed" not in parent.text and "Failed" not in parent.text
-    assert api.replies(CHANNEL, parent.ts) == []
+    # the header line is the run's state; the thread theme also shows a state per section below it
+    header = parent.text.splitlines()[0]
+    assert "In progress" in header
+    assert "Passed" not in header and "Failed" not in header
+    # the thread theme replies per finished step; only the final reply is broadcast
+    assert [m for m in api.replies(CHANNEL, parent.ts) if m.broadcast] == []
     # The DAG callback, as the DAG processor sends it (minimal context, finding 5). On Airflow
     # 3.2.2, dag.test()'s own DAG callback passes a SerializedDAG whose tasks carry no milestone
     # marker, so it sends nothing; the "exactly one final reply" checks below therefore do not
@@ -135,8 +138,10 @@ def test_passing_run_posts_one_parent_and_keeps_the_variable(
     run_id = run(module, api, {}, "success")
 
     (parent,) = api.top_level(CHANNEL)
-    assert "Passed" in parent.text and "4/4" in parent.text  # cleanup_tmp is not a milestone
-    (final,) = api.replies(CHANNEL, parent.ts)
+    assert "Passed" in parent.text
+    # two sections of two milestones each, one icon per step; cleanup_tmp is not a milestone
+    assert parent.text.count(":white_check_mark::white_check_mark:") == 2
+    (final,) = [m for m in api.replies(CHANNEL, parent.ts) if m.broadcast]
     assert "Passed" in final.text
     assert_kept(store, run_id, parent.ts)
 
@@ -150,9 +155,10 @@ def test_failing_run_ends_failed_with_an_alert(monkeypatch: pytest.MonkeyPatch) 
 
     (parent,) = api.top_level(CHANNEL)
     assert "Failed" in parent.text
-    replies = [m.text for m in api.replies(CHANNEL, parent.ts)]
+    thread = api.replies(CHANNEL, parent.ts)
+    replies = [m.text for m in thread]
     alerts = [text for text in replies if text.startswith("<@U0123456789>")]
-    (final,) = [text for text in replies if text not in alerts]  # exactly one final reply
+    (final,) = [m.text for m in thread if m.broadcast and m.text not in alerts]  # one final reply
     assert "Failed" in final
     assert any("Regression checks" in text for text in alerts)
     assert_kept(store, run_id, parent.ts)

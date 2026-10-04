@@ -57,8 +57,8 @@ Check each scenario in the test channel. After every run, also check:
 
 | Scenario | Command | Expected |
 |---|---|---|
-| Passing run | `airflow dags trigger chappe_example` | One message that moves from "In progress" to "Passed · 4/4 steps"; one final reply, also shown in the channel. Admin → Variables shows one `chappe__chappe_example__…` Variable with a masked value |
-| Failing run | `airflow dags trigger chappe_example --conf '{"fail": true}'` | Message ends "Failed"; exactly one final reply; an alert reply mentions you and names "Regression checks" |
+| Passing run | `airflow dags trigger chappe_example` | One message whose header moves from "In progress" to "Passed" (thread theme: two sections, a check mark per finished step); one reply per finished step in its thread and one final reply, also shown in the channel. Admin → Variables shows one `chappe__chappe_example__…` Variable with a masked value |
+| Failing run | `airflow dags trigger chappe_example --conf '{"fail": true}'` | Message ends "Failed"; exactly one final reply (the one shown in the channel); an alert reply mentions you and names "Regression checks" |
 | Two parallel runs | run `airflow dags trigger chappe_example` twice within a second | Two separate messages, one per run, no interleaving. If a duplicate parent appears for a moment, it is deleted and one message per run remains |
 | Cleared task after finish | after a passing run, clear `compare.regression` in that run (UI: task → Clear, without downstream) | Known limit: the message keeps showing "Passed" while the task runs again. It shows the new final status only when the run finishes again |
 | Cleanup (dry run) | `airflow variables list \| grep chappe__`, then `chappe cleanup --older-than 1h --dry-run` | The list shows one `chappe__chappe_example__…` Variable per run above. The dry run lists none (they are new) and deletes nothing |
