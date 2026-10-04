@@ -210,6 +210,63 @@ def test_a_failed_duplicate_delete_is_left_to_the_next_event(
     assert saved is not None and loser in saved.cleared_parents
 
 
+def _deadline_warning(caplog: pytest.LogCaptureFixture, loser: str) -> str:
+    return next(
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.WARNING and loser in r.getMessage()
+    )
+
+
+def test_a_duplicate_delete_past_the_deadline_names_the_known_winner(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The budget is spent before the attempt reads the store: the WARNING names the winner the
+    event read last, and the duplicate stays for the next event."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    writer(api, variables).handle(stage(S, R, P))
+    (winner,) = api.top_level(CHANNEL)
+    loser = api.post(CHANNEL, "duplicate parent")
+    store_for(variables).save(KEY, SentState(KEY, stale_parents=frozenset({loser})))
+
+    late = SlackTransport(api, clock=lambda: 100.0)  # past every deadline
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        writer(api, variables, transport=late).handle(stage(S, R, P))
+    warning = _deadline_warning(caplog, loser)
+    assert KEY in warning and winner.ts in warning and "deadline" in warning
+    assert "unknown" not in warning
+    assert [name for name, _ in api.calls].count("delete") == 0
+    saved = store_for(variables).load(KEY)
+    assert saved is not None and loser in saved.stale_parents
+
+
+def test_a_store_read_out_of_time_inside_the_attempt_is_a_failed_delete(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The deadline passes between the attempt's deadline check and its store read: that read is
+    not made, and the duplicate delete fails like any other spent budget."""
+    now = [0.0]
+    api, variables = FakeSlackApi(), FakeVariables()
+    writer(api, variables).handle(stage(S, R, P))
+    (winner,) = api.top_level(CHANNEL)
+    loser = api.post(CHANNEL, "duplicate parent")
+    store_for(variables).save(KEY, SentState(KEY, stale_parents=frozenset({loser})))
+
+    def budget_runs_out_after_the_check() -> float:
+        now[0] = 11.0  # the engine's 10s budget ends right after the transport's own check
+        return 0.0
+
+    transport = SlackTransport(api, clock=budget_runs_out_after_the_check)
+    w = writer(api, variables, clock=lambda: now[0], transport=transport)
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        w.handle(stage(S, R, P))
+    warning = _deadline_warning(caplog, loser)
+    assert KEY in warning and winner.ts in warning and "deadline" in warning
+    assert [name for name, _ in api.calls].count("delete") == 0
+    saved = store_for(variables).load(KEY)
+    assert saved is not None and loser in saved.stale_parents
+
+
 def test_a_parent_dropped_by_a_stale_write_is_saved_again() -> None:
     """A parallel writer that read before our save overwrites it right after.
 

@@ -363,10 +363,11 @@ def test_a_delayed_duplicate_delete_never_removes_the_winner_that_got_the_final_
     x_paused, b_done = threading.Event(), threading.Event()
     results: dict[str, HandleResult] = {}
     second: list[str] = []
+    waits: list[bool] = []  # the helpers run on X's thread or inside B's engine: checked below
 
     def x_waits_out_the_retry(seconds: float) -> None:
         x_paused.set()
-        assert b_done.wait(WAIT_S)
+        waits.append(b_done.wait(WAIT_S))
 
     held = SlackTransport(api, clock=lambda: 0.0, sleep=x_waits_out_the_retry)
     x = writer(api, variables, transport=held)
@@ -394,7 +395,7 @@ def test_a_delayed_duplicate_delete_never_removes_the_winner_that_got_the_final_
         thread_x = threading.Thread(target=run_x)
         thread_x.start()
         threads.append(thread_x)
-        assert x_paused.wait(WAIT_S)
+        waits.append(x_paused.wait(WAIT_S))
 
     threads: list[threading.Thread] = []
     final = stage(S, S, F, finished=ProcessState.FAILED)
@@ -406,7 +407,10 @@ def test_a_delayed_duplicate_delete_never_removes_the_winner_that_got_the_final_
             b_done.set()
         for thread in threads:
             thread.join(WAIT_S)
-    assert results["b"] is HandleResult.SENT
+            assert not thread.is_alive()
+    assert len(threads) == 1 and all(waits)
+    # X carries D's view, already stored: its failed delete is all it does
+    assert results == {"b": HandleResult.SENT, "x": HandleResult.SKIPPED}
 
     expected = render(final)
     winner = api.message(CHANNEL, first.ts)

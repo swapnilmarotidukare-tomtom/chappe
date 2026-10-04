@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from functools import partial
 from typing import Any
 
 from chappe.core.errors import StoreError, TransportError
@@ -24,6 +25,7 @@ from chappe.ports.transport import Transport
 log = logging.getLogger("chappe")
 
 MESSAGE_NOT_FOUND = "message_not_found"
+DEADLINE = "deadline"
 
 
 class HandleResult(str, Enum):
@@ -472,27 +474,32 @@ class Engine:
         after the deadline. Each delete is recorded right after it is made, without a deadline
         check (it records a Slack call already made).
         """
-        for ts in sorted(state.stale_parents, key=slack_ts_key):
-            winner: list[str | None] = []
+        winner: list[str | None] = [state.parent_ref]  # as seen by the latest read
 
-            def still_stale(ts: str = ts, winner: list[str | None] = winner) -> bool:
+        def still_stale(ts: str) -> bool:
+            try:
                 current = self._load(key, deadline)  # the winner may have changed since `state`
-                winner[:] = [None if current is None else current.parent_ref]
-                return winner[0] != ts
+            except _OutOfTime:
+                raise TransportError(DEADLINE, retryable=True) from None
+            winner[0] = None if current is None else current.parent_ref
+            return winner[0] != ts
 
+        for ts in sorted(state.stale_parents, key=slack_ts_key):
             try:
                 deleted = self._transport.delete_duplicate(
-                    self._settings.channel, ts, deadline=deadline, still_stale=still_stale
+                    self._settings.channel,
+                    ts,
+                    deadline=deadline,
+                    still_stale=partial(still_stale, ts),
                 )
             except TransportError as exc:
-                seen = winner[0] if winner and winner[0] is not None else "unknown"
                 log.warning(
                     "chappe: could not delete duplicate parent %s of %s (%s); the winner is %s; "
                     "leaving it, the next event tries again",
                     ts,
                     key,
                     exc.code,
-                    seen,
+                    winner[0] if winner[0] is not None else "unknown",
                 )
                 continue
             if not deleted:
