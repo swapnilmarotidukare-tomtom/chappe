@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 import sys
 import warnings
@@ -45,7 +46,7 @@ def test_builds_one_engine_per_process(tmp_path: Path) -> None:
 
     def connections(conn_id: str) -> ConnectionInfo:
         looked_up.append(conn_id)
-        return ConnectionInfo(host=None, login=None, password="xoxb-test", port=None)
+        return ConnectionInfo(password="xoxb-test")
 
     runtime = Runtime(load_settings(write_config(tmp_path)), connections=connections)
     assert runtime.resolve(None, "orders") is not None
@@ -60,7 +61,7 @@ def test_builds_one_engine_per_process(tmp_path: Path) -> None:
 def test_a_slack_connection_without_a_token_is_a_config_error(tmp_path: Path) -> None:
     runtime = Runtime(
         load_settings(write_config(tmp_path)),
-        connections=lambda _: ConnectionInfo(host=None, login=None, password=None, port=None),
+        connections=lambda _: ConnectionInfo(password=None),
     )
     with pytest.raises(ChappeConfigError, match="chappe_slack"):
         runtime.engine("orders")
@@ -132,3 +133,20 @@ def test_unavailable_metrics_are_logged_once_at_debug(
         runtime_module._metrics("chappe.events.sent")
     lines = [r for r in caplog.records if "metrics" in r.getMessage()]
     assert len(lines) == 1 and lines[0].levelno == logging.DEBUG
+
+
+def test_connection_info_holds_only_the_token_and_hides_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    import airflow.sdk
+
+    from chappe.integrations.airflow.connections import airflow_connection
+
+    fake = SimpleNamespace(host="slack.invalid", login="bot", password="xoxb-secret", port=443)
+    monkeypatch.setattr(airflow.sdk.Connection, "get", staticmethod(lambda conn_id: fake))
+    info = airflow_connection("chappe_slack")
+    assert [f.name for f in dataclasses.fields(info)] == ["password"]
+    assert info.password == "xoxb-secret"
+    assert "xoxb-secret" not in repr(info)

@@ -86,9 +86,7 @@ def wire(
     store = AirflowVariableStore(get=variables.get, set=variables.set)
     runtime = Runtime(
         load_settings(ROOT / "examples/chappe.yaml"),
-        connections=lambda _: ConnectionInfo(
-            host=None, login=None, password="xoxb-test", port=None
-        ),
+        connections=lambda _: ConnectionInfo(password="xoxb-test"),
     )
     engine = runtime.engine("example")
     engine._transport = SlackTransport(api)  # test seam: replace the real Slack client
