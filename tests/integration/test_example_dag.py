@@ -38,7 +38,7 @@ _db_ready = False
 def airflow_db(network_attempts: list[str]) -> None:
     """A fresh sqlite metadata DB in the throwaway AIRFLOW_HOME set by tests/conftest.py.
 
-    Function-scoped so it runs inside the network block; the DB is built once per session.
+    Function-scoped so a network attempt during initdb fails a test; built once per session.
     """
     global _db_ready
     if _db_ready:

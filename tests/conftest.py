@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import os
 import shutil
-import socket
 import sys
 import tempfile
 from collections.abc import Callable, Iterator
-from typing import Any
 
 import pytest
 from hypothesis import settings
@@ -20,6 +18,8 @@ if os.environ.get("HYPOTHESIS_PROFILE"):
 elif os.environ.get("CI"):
     settings.load_profile("ci")
 
+pytest_plugins = ("pytester",)
+
 _AIRFLOW_HOME = pytest.StashKey[str]()
 _SAVED_ENV = pytest.StashKey[dict[str, str | None]]()
 
@@ -28,11 +28,16 @@ pytest.register_assert_rewrite("tests.support")
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Point Airflow at a throwaway home before anything imports it.
+    """Block the network and point Airflow at a throwaway home, before collection.
 
-    Airflow reads AIRFLOW_HOME (and builds its DB engine) at import time, so a fixture would be
-    too late: without this, tests would use ~/airflow.
+    The block covers collection and module/session fixtures too; an attempt there fails the
+    session. Airflow reads AIRFLOW_HOME (and builds its DB engine) at import time, so a fixture
+    would be too late: without this, tests would use ~/airflow.
     """
+    from tests.support.network import GUARD
+
+    GUARD.install()
+    config.pluginmanager.register(GUARD, "chappe-network-guard")
     if "airflow" in sys.modules:
         raise pytest.UsageError("airflow was imported before tests/conftest.py could isolate it")
     home = tempfile.mkdtemp(prefix="chappe-airflow-home-")
@@ -48,6 +53,9 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
+    from tests.support.network import GUARD
+
+    GUARD.uninstall()
     for name, value in config.stash.get(_SAVED_ENV, {}).items():
         if value is None:
             os.environ.pop(name, None)
@@ -81,91 +89,19 @@ def chappe_snapshot(request: pytest.FixtureRequest) -> Callable[[str, str], None
     return check
 
 
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
-
-
-def fail_if_blocked(attempts: list[str]) -> None:
-    """Fail the running test if any network attempt was blocked (a caught raise is not enough)."""
-    if attempts:
-        pytest.fail(f"network access was attempted in tests: {', '.join(attempts)}", pytrace=False)
-
-
-def _check_target(target: Any, attempts: list[str] | None = None) -> None:
-    """Raise unless target is loopback or a unix socket path."""
-    if isinstance(target, (str, bytes)):  # AF_UNIX path
-        return
-    host = target[0] if isinstance(target, tuple) and target else target
-    if isinstance(host, bytes):
-        host = host.decode(errors="replace")
-    if host in _LOOPBACK_HOSTS:
-        return
-    if attempts is not None:
-        attempts.append(str(host))
-    raise RuntimeError(f"network access is blocked in tests: {host}")
-
-
 @pytest.fixture(autouse=True)
-def network_attempts(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
-    """Block non-loopback network use (connects, name lookups, datagrams) and record each attempt;
-    fail at teardown if any.
+def network_attempts() -> Iterator[list[str]]:
+    """Collect the network attempts blocked while this test runs; fail at teardown if any.
 
-    A test that deliberately provokes a block clears the yielded list after asserting on it.
+    The block itself is installed for the whole session in pytest_configure. A test that
+    deliberately provokes a block clears the yielded list after asserting on it.
     """
+    from tests.support.network import GUARD, fail_if_blocked
+
     attempts: list[str] = []
-    real_connect = socket.socket.connect
-    real_connect_ex = socket.socket.connect_ex
-    real_create_connection = socket.create_connection
-    real_getaddrinfo = socket.getaddrinfo
-
-    def connect(self: socket.socket, address: Any) -> None:
-        if self.family != socket.AF_UNIX:
-            _check_target(address, attempts)
-        return real_connect(self, address)
-
-    def connect_ex(self: socket.socket, address: Any) -> int:
-        if self.family != socket.AF_UNIX:
-            _check_target(address, attempts)
-        return real_connect_ex(self, address)
-
-    def create_connection(address: Any, *args: Any, **kwargs: Any) -> socket.socket:
-        _check_target(address, attempts)
-        return real_create_connection(address, *args, **kwargs)
-
-    def getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
-        if host not in (None, "", "0.0.0.0", "::"):
-            _check_target((host,), attempts)
-        return real_getaddrinfo(host, *args, **kwargs)
-
-    def lookup(real: Callable[..., Any]) -> Callable[..., Any]:
-        def blocked(host: Any, *args: Any, **kwargs: Any) -> Any:
-            _check_target((host,), attempts)
-            return real(host, *args, **kwargs)
-
-        return blocked
-
-    real_sendto = socket.socket.sendto
-    real_sendmsg = socket.socket.sendmsg
-
-    def sendto(self: socket.socket, data: Any, *args: Any) -> int:
-        # sendto(data, address) or sendto(data, flags, address)
-        if self.family != socket.AF_UNIX and args:
-            _check_target(args[-1], attempts)
-        return real_sendto(self, data, *args)
-
-    def sendmsg(self: socket.socket, buffers: Any, *args: Any, **kwargs: Any) -> int:
-        # sendmsg(buffers[, ancdata[, flags[, address]]])
-        address = args[2] if len(args) > 2 else kwargs.get("address")
-        if self.family != socket.AF_UNIX and address is not None:
-            _check_target(address, attempts)
-        return real_sendmsg(self, buffers, *args, **kwargs)
-
-    monkeypatch.setattr(socket.socket, "connect", connect)
-    monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
-    monkeypatch.setattr(socket.socket, "sendto", sendto)
-    monkeypatch.setattr(socket.socket, "sendmsg", sendmsg)
-    monkeypatch.setattr(socket, "create_connection", create_connection)
-    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
-    for name in ("gethostbyname", "gethostbyname_ex", "gethostbyaddr"):
-        monkeypatch.setattr(socket, name, lookup(getattr(socket, name)))
-    yield attempts
+    GUARD.test_attempts = attempts
+    try:
+        yield attempts
+    finally:
+        GUARD.test_attempts = None
     fail_if_blocked(attempts)

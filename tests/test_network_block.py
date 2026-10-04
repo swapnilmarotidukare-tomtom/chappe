@@ -6,10 +6,13 @@ import contextlib
 import os
 import socket
 import tempfile
+from pathlib import Path
 
 import pytest
 
-from tests.conftest import fail_if_blocked
+from tests.support.network import GUARD, fail_if_blocked
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_non_loopback_connection_is_blocked(network_attempts: list[str]) -> None:
@@ -116,3 +119,66 @@ def test_loopback_and_unix_datagrams_are_allowed() -> None:
         server.bind(path)
         client.sendto(b"u", path)
         assert server.recv(1) == b"u"
+
+
+# Read while this module is imported, i.e. during collection.
+_INSTALLED_AT_COLLECTION = GUARD.installed
+
+
+def test_block_is_installed_before_collection() -> None:
+    assert _INSTALLED_AT_COLLECTION
+
+
+@pytest.fixture(scope="module")
+def module_scope_attempts() -> list[str]:
+    """A blocked lookup from a module-scoped fixture, outside the per-test window."""
+    if GUARD.installed:  # never risk a real lookup if the block is missing
+        with contextlib.suppress(RuntimeError):
+            socket.gethostbyname("slack.invalid")
+    seen = list(GUARD.outside_attempts)
+    GUARD.outside_attempts.clear()  # deliberate: the session check would otherwise fail the run
+    return seen
+
+
+def test_block_covers_module_scoped_fixtures(module_scope_attempts: list[str]) -> None:
+    assert module_scope_attempts == ["slack.invalid"]
+
+
+_CHILD_TESTS = """
+import contextlib
+import socket
+
+from tests.support.network import GUARD
+
+if GUARD.installed:  # never risk a real lookup if the block is missing
+    with contextlib.suppress(RuntimeError):
+        socket.gethostbyname("slack.invalid")  # at collection
+
+
+def test_passes():
+    pass
+
+
+def test_swallows_a_blocked_connection():
+    assert GUARD.installed
+    with contextlib.suppress(Exception):  # what a catch-all callback would do
+        socket.create_connection(("slack.invalid", 443), timeout=1)
+"""
+
+
+def test_attempts_fail_the_test_or_the_session(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A child pytest run with this suite's conftest as a plugin."""
+    monkeypatch.setenv("PYTHONPATH", str(ROOT))
+    pytester.makepyfile(test_child=_CHILD_TESTS)
+    result = pytester.runpytest_subprocess("-p", "tests.conftest", "-p", "no:cacheprovider")
+    result.assert_outcomes(passed=2, errors=1)  # the teardown error is on a passed test
+    result.stdout.fnmatch_lines(
+        [
+            "*network access was attempted in tests: slack.invalid*",
+            "*network access was attempted outside any test (collection or a module/session "
+            "fixture): slack.invalid",
+        ]
+    )
+    assert result.ret == pytest.ExitCode.TESTS_FAILED
