@@ -1,0 +1,243 @@
+# tests/config/test_config.py
+from collections.abc import Callable
+from pathlib import Path
+
+import pytest
+
+from chappe.config.loader import chappe_enabled, load_settings
+from chappe.config.models import ProcessConfig
+from chappe.core.errors import ChappeConfigError
+
+VALID = """
+chappe:
+  processes:
+    orders:
+      dags: [{dag_id: orders_pipeline, section: Orders}]
+      channel: C0123456789
+      title: "{{ params.product }} {{ params.version }}"
+      alerts: {mention: "<!subteam^S0123>"}
+      milestones:
+        cleanup: {hidden: true}
+"""
+
+
+def write(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "chappe.yaml"
+    path.write_text(text)
+    return path
+
+
+def with_defaults(defaults: str) -> str:
+    return VALID.replace("chappe:\n", f"chappe:\n  defaults:\n{defaults}")
+
+
+def orders(tmp_path: Path, text: str = VALID) -> ProcessConfig:
+    found = load_settings(write(tmp_path, text)).process_for_dag("orders_pipeline")
+    assert found is not None
+    return found[1]
+
+
+def test_valid_config_loads_with_defaults(tmp_path: Path) -> None:
+    settings = load_settings(write(tmp_path, VALID))
+    found = settings.process_for_dag("orders_pipeline")
+    assert found is not None
+    name, process = found
+    assert name == "orders"
+    assert process.channel == "C0123456789"
+    assert settings.defaults.store.type == "airflow_variable"
+    assert settings.defaults.transport.type == "slack"
+    assert settings.defaults.transport.connection_id == "chappe_slack"
+    assert settings.defaults.ui_base_url is None
+    assert settings.theme_for(process).name == "thread"
+    assert process.milestones["cleanup"].hidden
+    assert settings.process_for_dag("other") is None
+
+
+def test_ui_base_url_is_read_from_defaults(tmp_path: Path) -> None:
+    text = with_defaults("    ui_base_url: https://airflow.invalid\n")
+    settings = load_settings(write(tmp_path, text))
+    assert settings.defaults.ui_base_url == "https://airflow.invalid"
+
+
+def test_only_the_airflow_variable_store_is_accepted(tmp_path: Path) -> None:
+    text = with_defaults("    store: {type: slack_metadata}\n")
+    with pytest.raises(ChappeConfigError, match="airflow_variable"):
+        load_settings(write(tmp_path, text))
+
+
+def test_the_old_airflow_api_block_is_rejected(tmp_path: Path) -> None:
+    text = with_defaults("    airflow_api: {connection_id: chappe_airflow_api}\n")
+    with pytest.raises(ChappeConfigError, match="airflow_api"):
+        load_settings(write(tmp_path, text))
+
+
+@pytest.mark.parametrize("channel", ["'#pipeline-runs'", "pipeline-runs", "D0123456789"])
+def test_channel_must_be_a_channel_id(tmp_path: Path, channel: str) -> None:
+    with pytest.raises(ChappeConfigError) as info:
+        load_settings(write(tmp_path, VALID.replace("C0123456789", channel)))
+    assert "channel ID" in str(info.value)
+    assert "About panel" in str(info.value)
+
+
+def test_dm_id_is_named_as_a_dm(tmp_path: Path) -> None:
+    with pytest.raises(ChappeConfigError, match="direct-message"):
+        load_settings(write(tmp_path, VALID.replace("C0123456789", "D0123456789")))
+
+
+def test_private_channel_id_is_accepted(tmp_path: Path) -> None:
+    assert orders(tmp_path, VALID.replace("C0123456789", "G0123456789")).channel == "G0123456789"
+
+
+def test_bare_yaml_on_key_is_read_as_on(tmp_path: Path) -> None:
+    text = VALID.replace('"<!subteam^S0123>"}', '"<!subteam^S0123>", on: final_failure}')
+    assert orders(tmp_path, text).alerts.on == "final_failure"
+
+
+def test_more_than_one_dag_is_rejected_until_0_0_3(tmp_path: Path) -> None:
+    text = VALID.replace(
+        "dags: [{dag_id: orders_pipeline, section: Orders}]", "dags: [{dag_id: a}, {dag_id: b}]"
+    )
+    with pytest.raises(ChappeConfigError, match=r"0\.0\.3"):
+        load_settings(write(tmp_path, text))
+
+
+def test_unknown_keys_are_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ChappeConfigError, match="chanel"):
+        load_settings(write(tmp_path, VALID.replace("channel:", "chanel: x\n      channel:")))
+
+
+def test_bad_title_template_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ChappeConfigError, match="title"):
+        load_settings(write(tmp_path, VALID.replace("{{ params.version }}", "{{ params.version ")))
+
+
+def test_unknown_timezone_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ChappeConfigError, match="unknown timezone"):
+        load_settings(write(tmp_path, with_defaults("    time: {timezone: Mars/Base}\n")))
+
+
+def test_a_dag_in_two_processes_is_rejected(tmp_path: Path) -> None:
+    text = (
+        VALID
+        + """
+    copy:
+      dags: [{dag_id: orders_pipeline}]
+      channel: C0123456789
+"""
+    )
+    with pytest.raises(ChappeConfigError, match="orders_pipeline"):
+        load_settings(write(tmp_path, text))
+
+
+def test_missing_config_path_is_explained(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CHAPPE_CONFIG", raising=False)
+    with pytest.raises(ChappeConfigError, match="CHAPPE_CONFIG"):
+        load_settings()
+
+
+def test_config_path_comes_from_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CHAPPE_CONFIG", str(write(tmp_path, VALID)))
+    assert "orders" in load_settings().processes
+
+
+def test_kill_switch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = load_settings(write(tmp_path, VALID))
+    monkeypatch.delenv("CHAPPE_ENABLED", raising=False)
+    assert chappe_enabled(settings)
+    monkeypatch.setenv("CHAPPE_ENABLED", "false")
+    assert not chappe_enabled(settings)
+
+
+@pytest.mark.parametrize("zone", ["America", "Europe/", "../etc/passwd"])
+def test_a_timezone_that_is_a_directory_or_path_is_a_config_error(
+    tmp_path: Path, zone: str
+) -> None:
+    with pytest.raises(ChappeConfigError, match="unknown timezone"):
+        load_settings(write(tmp_path, with_defaults(f"    time: {{timezone: '{zone}'}}\n")))
+
+
+def test_a_file_that_is_not_utf8_is_a_config_error(tmp_path: Path) -> None:
+    path = tmp_path / "chappe.yaml"
+    path.write_bytes(VALID.encode("utf-8") + b"# caf\xe9\n")
+    with pytest.raises(ChappeConfigError, match="UTF-8"):
+        load_settings(path)
+
+
+def test_a_utf8_file_is_read_as_utf8_whatever_the_locale(tmp_path: Path) -> None:
+    path = tmp_path / "chappe.yaml"
+    path.write_bytes(VALID.replace("Orders", "Bestellungen · Übersicht").encode("utf-8"))
+    found = load_settings(path).process_for_dag("orders_pipeline")
+    assert found is not None and found[1].dags[0].section == "Bestellungen · Übersicht"
+
+
+@pytest.mark.parametrize("channel", ['"C0123456789\\n"', '"D0123456789\\n"'])
+def test_a_channel_id_with_a_trailing_newline_is_rejected(tmp_path: Path, channel: str) -> None:
+    with pytest.raises(ChappeConfigError, match="channel"):
+        load_settings(write(tmp_path, VALID.replace("C0123456789", channel)))
+
+
+def test_an_unknown_theme_is_rejected_at_load(tmp_path: Path) -> None:
+    """Spec 9.1: theme names and tokens are validated at load, for the runtime too."""
+    text = with_defaults("    theme: {name: neon}\n")
+    with pytest.raises(ChappeConfigError, match=r"defaults\.theme: unknown theme 'neon'"):
+        load_settings(write(tmp_path, text))
+
+
+def test_bad_token_overrides_are_rejected_at_load(tmp_path: Path) -> None:
+    text = VALID + "      theme: {name: plain, tokens: {colours: {}}}\n"
+    with pytest.raises(ChappeConfigError, match=r"processes\.orders\.theme: unknown token section"):
+        load_settings(write(tmp_path, text))
+
+
+def with_billing(billing: str) -> str:
+    """VALID plus a second process, `billing`, whose body is `billing`."""
+    return VALID + "    billing:\n      dags: [{dag_id: billing}]\n" + billing
+
+
+def drop_collector() -> tuple[list[tuple[str, str]], Callable[[str, str], None]]:
+    dropped: list[tuple[str, str]] = []
+
+    def collect(name: str, reason: str) -> None:
+        dropped.append((name, reason))
+
+    return dropped, collect
+
+
+@pytest.mark.parametrize(
+    ("billing", "reason"),
+    [
+        ("      channel: '#billing'\n", "channel ID"),
+        ("      channel: C0123456789\n      theme: {name: neon}\n", "unknown theme 'neon'"),
+    ],
+)
+def test_an_error_inside_one_process_drops_only_that_process(
+    tmp_path: Path, billing: str, reason: str
+) -> None:
+    """Spec 9.1: a bad process disables Chappe for its own DAG only."""
+    path = write(tmp_path, with_billing(billing))
+    dropped, collect = drop_collector()
+    settings = load_settings(path, on_process_error=collect)
+    assert list(settings.processes) == ["orders"]
+    ((name, why),) = dropped
+    assert name == "billing" and reason in why
+    with pytest.raises(ChappeConfigError, match="billing"):
+        load_settings(path)  # validate-config's strict path still fails
+
+
+@pytest.mark.parametrize(
+    "defaults", ["    theme: {name: neon}\n", "    time: {timezone: Mars/Base}\n"]
+)
+def test_an_error_in_defaults_still_disables_chappe(tmp_path: Path, defaults: str) -> None:
+    dropped, collect = drop_collector()
+    with pytest.raises(ChappeConfigError):
+        load_settings(write(tmp_path, with_defaults(defaults)), on_process_error=collect)
+    assert dropped == []
+
+
+def test_an_error_at_the_top_level_still_disables_chappe(tmp_path: Path) -> None:
+    dropped, collect = drop_collector()
+    with pytest.raises(ChappeConfigError, match="enabeld"):
+        load_settings(write(tmp_path, VALID + "  enabeld: true\n"), on_process_error=collect)
+    assert dropped == []

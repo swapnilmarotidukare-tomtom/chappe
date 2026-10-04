@@ -1,0 +1,10 @@
+=== parent ===
+:white_check_mark: *orders 2026.10.1* · Passed · 1h 33m · started 08:05
+:white_check_mark::fast_forward::white_check_mark:  3/3 steps
+<https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
+=== thread ===
+[step:main.parquet_delta:succeeded] :white_check_mark: *Parquet → Delta* · Passed · <https://airflow.invalid/dags/orders/runs/run_1/tasks/parquet_delta|Log>
+[step:main.backfill:skipped] :fast_forward: *Backfill* · Skipped · <https://airflow.invalid/dags/orders/runs/run_1/tasks/backfill|Log>
+[step:main.aggregates:succeeded] :white_check_mark: *Aggregates* · Passed · <https://airflow.invalid/dags/orders/runs/run_1/tasks/aggregates|Log>
+[process:succeeded] (broadcast) :white_check_mark: *orders 2026.10.1* · Passed · 1h 33m · <https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
+=== alerts ===

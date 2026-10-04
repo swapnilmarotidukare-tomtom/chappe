@@ -1,0 +1,20 @@
+icons:
+  pending: ":white_circle:"
+  running: ":hourglass_flowing_sand:"
+  succeeded: ":white_check_mark:"
+  failed: ":x:"
+  skipped: ":fast_forward:"
+labels:
+  pending: "Waiting"
+  running: "In progress"
+  succeeded: "Passed"
+  failed: "Failed"
+  skipped: "Skipped"
+extra:
+  now: "Now"
+  steps: "steps"
+  started: "started"
+  passed: "passed"
+  failed: "failed"
+  skipped: "skipped"
+  not_run: "not run"
