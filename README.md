@@ -26,7 +26,7 @@ Claude Chappe (1763–1805), a French inventor, built the optical telegraph with
 
 - A Slack outage never fails a task: Chappe's errors are logged, not raised into Airflow.
 - A delayed update is fine. A wrong status is not.
-- When Chappe cannot tell whether a message landed, it does not post a second one.
+- When Chappe cannot tell whether a post landed, it does not retry it. A rare leftover message beats a double post.
 
 ## When it helps
 
@@ -37,7 +37,6 @@ Claude Chappe (1763–1805), a French inventor, built the optical telegraph with
 - A team channel that should show one tidy message per run, not a stream of task notifications.
 
 **Status:** Chappe 0.0.1 is an internal release: the wheel is in `releases/` and the tag is `v0.0.1`. It is not published on PyPI, has no public documentation site, and is not licensed for use outside the owning organization.
-
 
 ## Quick start
 
