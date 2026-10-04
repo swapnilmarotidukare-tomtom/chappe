@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- New default theme `metro`: one message per run with a status line and the run drawn as a line of stations, each with its duration. Only a failure alert goes into the thread; a passing run is exactly one channel message.
+- New default theme `metro`: one message per run with a status line and the run drawn as a line of stations, with the run's total time on the status line. Only a failure alert goes into the thread; a passing run is exactly one channel message.
 - **Breaking:** the `thread` theme is removed. A config that names it (`theme: {name: thread}`) no longer loads: remove the line (metro is the default) or name `metro`.
 - The example is now one flat DAG with four steps: Extract → Transform → Load → Report.
 

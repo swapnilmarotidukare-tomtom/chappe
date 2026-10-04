@@ -6,7 +6,7 @@
 
 ## What it does
 
-Chappe reports the progress of Apache Airflow 3 runs to Slack. Each DAG run gets one channel message that is edited in place as milestones start and finish. The message shows every step as a station on a line, with its duration. When a run fails, an alert mentions your on-call in the message's thread. DAG authors mark the tasks that matter with `@milestone`; channel, theme and icons are configuration.
+Chappe reports the progress of Apache Airflow 3 runs to Slack. Each DAG run gets one channel message that is edited in place as milestones start and finish. The message shows every step as a station on a line; a step's duration appears in the update its own callback makes, and the status line carries the run's total time. When a run fails, an alert mentions your on-call in the message's thread. DAG authors mark the tasks that matter with `@milestone`; channel, theme and icons are configuration.
 
 ````text
 *orders 2026.10.1*
