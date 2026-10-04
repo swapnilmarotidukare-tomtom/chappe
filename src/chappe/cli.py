@@ -6,7 +6,9 @@ import re
 import sys
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+from chappe.config.dag_scan import ProcessUse, dag_files, scan_file
 from chappe.config.loader import load_settings
 from chappe.core.errors import ChappeConfigError
 
@@ -19,8 +21,37 @@ def _validate_config(args: argparse.Namespace) -> int:
     except ChappeConfigError as exc:
         print(f"chappe: {exc}", file=sys.stderr)
         return 1
-    print(f"chappe: OK ({len(settings.processes)} processes)")
-    return 0
+    status = _check_dags(args.dags, sorted(settings.processes)) if args.dags else 0
+    if status == 0:
+        print(f"chappe: OK ({len(settings.processes)} processes)")
+    return status
+
+
+def _check_dags(paths: list[str], configured: list[str]) -> int:
+    """Flag literal `ChappeNotifier(process=...)` names that are not configured (1) or 0."""
+    uses: list[ProcessUse] = []
+    failed = False
+    for file in dag_files(Path(path) for path in paths):
+        try:
+            uses.extend(scan_file(file))
+        except (OSError, SyntaxError, ValueError) as exc:
+            print(f"chappe: {file}: cannot scan ({exc})", file=sys.stderr)
+            failed = True
+    for use in uses:
+        if use.name is None:
+            print(
+                f"chappe: {use.path}:{use.line}: ChappeNotifier process cannot be checked "
+                "(not a string literal)"
+            )
+        elif use.name not in configured:
+            names = ", ".join(configured) or "none"
+            print(
+                f"chappe: {use.path}:{use.line}: ChappeNotifier(process={use.name!r}) "
+                f"is not a configured process; configured: {names}",
+                file=sys.stderr,
+            )
+            failed = True
+    return 1 if failed else 0
 
 
 _DURATION = re.compile(r"([1-9][0-9]*)([dh])", re.ASCII)
@@ -65,6 +96,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate = commands.add_parser("validate-config", help="check a Chappe config file")
     validate.add_argument("path", nargs="?", help="config file (default: $CHAPPE_CONFIG)")
+    validate.add_argument(
+        "--dags",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="DAG file or folder to scan for unknown ChappeNotifier process names (repeatable)",
+    )
     validate.set_defaults(handler=_validate_config)
 
     clean = commands.add_parser(

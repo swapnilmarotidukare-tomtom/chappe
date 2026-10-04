@@ -61,3 +61,11 @@ Check each scenario in the test channel. After every run, also check:
 | Cleanup (dry run) | `airflow variables list \| grep chappe__`, then `chappe cleanup --older-than 1h --dry-run` | The list shows one `chappe__chappe_example__…` Variable per run above. The dry run lists none (they are new) and deletes nothing |
 | Kill switch | restart with `CHAPPE_ENABLED=false`, trigger | No message; the run is unaffected |
 | Bad config | set `channel: "#test"`, restart, trigger | No message; the log says "chappe is disabled" with the reason; the run is unaffected |
+
+## 5. Catch process-name typos before deploy
+
+```bash
+chappe validate-config chappe.yaml --dags dags/
+```
+
+`--dags PATH` (repeatable; a file or a folder) scans the DAG files with Python's `ast`, without importing them or Airflow, and fails (exit 1, with `file:line`) when `ChappeNotifier(process="...")` names a process that is not in the config. Limits: the scan sees only string literals. A name built at run time (a variable, an f-string) is listed as "cannot be checked" and does not fail. Whether the named process lists this DAG is not checked. Dynamic names are caught only by the DAG-parse-time WARNING (`ChappeNotifier(process=...)` logs once per unknown name in the DAG-processor log) and by the run-time fallback (warn, then use the DAG's own process).

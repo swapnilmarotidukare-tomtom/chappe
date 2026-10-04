@@ -14,6 +14,28 @@ from chappe.integrations.airflow.callbacks import dispatch_run_finished
 
 log = logging.getLogger("chappe")
 
+_warned_unknown: set[str] = set()
+
+
+def _warn_if_unknown(process: str) -> None:
+    """At DAG parse time: one WARNING per unknown process name. Never raises."""
+    try:
+        from chappe.integrations.airflow.runtime import get_runtime
+
+        runtime = get_runtime()
+        if runtime is None or process in runtime.settings.processes or process in _warned_unknown:
+            return
+        _warned_unknown.add(process)
+        configured = ", ".join(sorted(runtime.settings.processes)) or "none"
+        log.warning(
+            "chappe: ChappeNotifier(process=%r) is not a configured process (configured: %s); "
+            "at run time Chappe uses the process of the DAG instead",
+            process,
+            configured,
+        )
+    except Exception:
+        log.exception("chappe: could not check the process name; the pipeline is not affected")
+
 
 def run_state(context: Mapping[str, Any]) -> ProcessState:
     """The run state from `dag_run`, or from the callback reason when there is no `dag_run`."""
@@ -34,6 +56,8 @@ class ChappeNotifier(BaseNotifier):
     def __init__(self, process: str | None = None) -> None:
         super().__init__()
         self.process = process
+        if process is not None:
+            _warn_if_unknown(process)
 
     def render_template_fields(self, context: Any, jinja_env: Any = None) -> None:
         """No templates (template_fields is empty). The base class asks the DAG for a Jinja env,

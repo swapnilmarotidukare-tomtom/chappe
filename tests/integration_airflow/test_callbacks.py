@@ -14,6 +14,8 @@ from chappe.core.engine import HandleResult
 from chappe.core.events import ChappeEvent, EventKind
 from chappe.core.model import ProcessState, StepState
 from chappe.integrations.airflow import callbacks
+from chappe.integrations.airflow import notifier as notifier_module
+from chappe.integrations.airflow import runtime as runtime_module
 from chappe.integrations.airflow.connections import ConnectionInfo
 from chappe.integrations.airflow.notifier import ChappeNotifier, run_state
 from chappe.integrations.airflow.runtime import Runtime, set_runtime
@@ -239,7 +241,8 @@ def test_a_wrong_notifier_process_warns_and_uses_the_dags_own_process(
         "orders",
         ProcessState.SUCCEEDED,
     )
-    (warning,) = [r for r in caplog.records if r.levelno == logging.WARNING]
+    # the parse-time warning (unknown names only) is separate: pick the run-time one
+    (warning,) = [r for r in caplog.records if "using the process of DAG" in r.getMessage()]
     assert repr(process) in warning.getMessage() and "'orders'" in warning.getMessage()
 
 
@@ -298,3 +301,26 @@ def test_the_notifier_renders_no_templates(
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
     (event,) = engine.events
     assert (event.kind, event.process_state) == (EventKind.RUN_FINISHED, ProcessState.SUCCEEDED)
+
+
+def test_unknown_process_name_warns_once_at_parse_time(
+    engine: RecordingEngine, caplog: pytest.LogCaptureFixture
+) -> None:
+    notifier_module._warned_unknown.clear()
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        ChappeNotifier(process="ordres")
+        ChappeNotifier(process="ordres")
+        ChappeNotifier(process="orders")
+        ChappeNotifier()
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "'ordres'" in warnings[0] and "configured: orders" in warnings[0]
+
+
+def test_parse_time_check_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom() -> None:
+        raise RuntimeError("boom")
+
+    notifier_module._warned_unknown.clear()
+    monkeypatch.setattr(runtime_module, "get_runtime", boom)
+    assert ChappeNotifier(process="x").process == "x"
