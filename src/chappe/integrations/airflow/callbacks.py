@@ -10,13 +10,12 @@ from typing import Any
 
 from airflow.sdk import Param
 
+from chappe.config.loader import chappe_enabled
 from chappe.core.events import ChappeEvent, EventKind
 from chappe.core.model import ProcessState, StepState
 from chappe.integrations.airflow.source import process_key
 
 log = logging.getLogger("chappe")
-
-RETRY_STATE = "up_for_retry"
 
 
 def _error_text(context: Mapping[str, Any]) -> str | None:
@@ -73,7 +72,6 @@ def _dispatch(
     step_state: StepState | None = None,
     process_state: ProcessState | None = None,
     process: str | None = None,
-    keep_error: bool = True,
 ) -> None:
     try:
         from chappe.integrations.airflow.runtime import get_runtime
@@ -85,7 +83,9 @@ def _dispatch(
         found = runtime.resolve(process, dag.dag_id)
         if found is None:
             return
-        name, _ = found
+        name, config = found
+        if not (chappe_enabled(runtime.settings) and config.enabled):
+            return  # kill switch: before the engine, so no connection lookup happens
         # DAG callbacks: the context's "ti" is the last task, not the event's step.
         ti = context.get("ti") if kind is not EventKind.RUN_FINISHED else None
         event = ChappeEvent(
@@ -98,7 +98,7 @@ def _dispatch(
             step_key=ti.task_id if ti is not None else None,
             step_state=step_state,
             process_state=process_state,
-            error=_error_text(context) if keep_error else None,
+            error=_error_text(context),
             payload=_payload(context, ti),
         )
         runtime.engine(name).handle(event)
@@ -116,11 +116,6 @@ def _dispatch(
             )
 
 
-def _will_retry(context: Mapping[str, Any]) -> bool:
-    state = getattr(context.get("ti"), "state", None)
-    return str(getattr(state, "value", state)) == RETRY_STATE
-
-
 def on_step_started(context: Mapping[str, Any]) -> None:
     _dispatch(context, EventKind.STEP_STARTED, step_state=StepState.RUNNING)
 
@@ -130,15 +125,7 @@ def on_step_succeeded(context: Mapping[str, Any]) -> None:
 
 
 def on_step_failed(context: Mapping[str, Any]) -> None:
-    try:
-        retrying = _will_retry(context)
-    except Exception:
-        retrying = False
-    if retrying:
-        # the task runs again: the step is still running, not failed
-        _dispatch(context, EventKind.STEP_FINISHED, step_state=StepState.RUNNING, keep_error=False)
-    else:
-        _dispatch(context, EventKind.STEP_FINISHED, step_state=StepState.FAILED)
+    _dispatch(context, EventKind.STEP_FINISHED, step_state=StepState.FAILED)
 
 
 def on_step_skipped(context: Mapping[str, Any]) -> None:

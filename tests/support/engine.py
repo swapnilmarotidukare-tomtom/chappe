@@ -111,6 +111,7 @@ def writer(
     metrics: Callable[[str], None] = _no_metrics,
     clock: Callable[[], float] = _zero_clock,
     transport: Transport | None = None,
+    event_budget_s: float = 10.0,
 ) -> Writer:
     prepared = source if source is not None else PreparedSource()
     engine = Engine(
@@ -120,7 +121,7 @@ def writer(
         context=CTX,
         transport=transport if transport is not None else SlackTransport(api, clock=clock),
         store=store_for(variables, before_read),
-        settings=EngineSettings(channel=CHANNEL),
+        settings=EngineSettings(channel=CHANNEL, event_budget_s=event_budget_s),
         enabled=lambda: enabled,
         metrics=metrics,
         clock=clock,

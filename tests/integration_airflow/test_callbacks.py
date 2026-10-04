@@ -14,6 +14,7 @@ from chappe.core.engine import HandleResult
 from chappe.core.events import ChappeEvent, EventKind
 from chappe.core.model import ProcessState, StepState
 from chappe.integrations.airflow import callbacks
+from chappe.integrations.airflow.connections import ConnectionInfo
 from chappe.integrations.airflow.notifier import ChappeNotifier, run_state
 from chappe.integrations.airflow.runtime import Runtime, set_runtime
 
@@ -142,22 +143,6 @@ def test_params_are_resolved_to_plain_values(engine: RecordingEngine) -> None:
     )
 
 
-def test_a_failure_that_will_be_retried_keeps_the_step_running(engine: RecordingEngine) -> None:
-    ctx = task_context(exception=ValueError("flaky"), ended=True)
-    ctx["ti"].state = SimpleNamespace(value="up_for_retry")  # TaskInstanceState is a str enum
-    callbacks.on_step_failed(ctx)
-    ctx["ti"].state = "up_for_retry"
-    callbacks.on_step_failed(ctx)
-    ctx["ti"].state = "failed"
-    callbacks.on_step_failed(ctx)
-    assert [e.step_state for e in engine.events] == [
-        StepState.RUNNING,
-        StepState.RUNNING,
-        StepState.FAILED,
-    ]
-    assert engine.events[0].error is None and engine.events[2].error == "ValueError: flaky"
-
-
 def test_notifier_takes_the_run_state_from_dag_run(engine: RecordingEngine) -> None:
     ChappeNotifier().notify(dag_context("failed", "task_failure"))
     ChappeNotifier(process="orders")(
@@ -221,3 +206,47 @@ def test_unconfigured_dag_is_ignored(engine: RecordingEngine) -> None:
     callbacks.on_step_started(ctx)
     ChappeNotifier(process="unknown").notify(dag_context("success", "success"))
     assert engine.events == []
+
+
+@pytest.mark.parametrize(
+    ("settings", "env"),
+    [
+        ({**SETTINGS, "enabled": False}, None),
+        (SETTINGS, "0"),
+        (
+            {
+                "processes": {
+                    "orders": {
+                        "dags": [{"dag_id": "orders"}],
+                        "channel": "C0123456789",
+                        "enabled": False,
+                    }
+                }
+            },
+            None,
+        ),
+    ],
+)
+def test_the_kill_switch_returns_before_building_the_engine(
+    settings: dict[str, Any],
+    env: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    if env is not None:
+        monkeypatch.setenv("CHAPPE_ENABLED", env)
+    looked_up: list[str] = []
+
+    def no_connection(conn_id: str) -> ConnectionInfo:
+        looked_up.append(conn_id)
+        raise RuntimeError("connection chappe_slack not found")
+
+    set_runtime(Runtime(ChappeSettings.model_validate(settings), connections=no_connection))
+    try:
+        with caplog.at_level(logging.DEBUG, logger="chappe"):
+            callbacks.on_step_started(task_context())
+            ChappeNotifier().notify(dag_context("success", "success"))
+    finally:
+        set_runtime(None)
+    assert looked_up == []
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]

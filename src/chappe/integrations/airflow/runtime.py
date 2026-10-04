@@ -26,13 +26,19 @@ from chappe.transports.slack.transport import SlackTransport
 log = logging.getLogger("chappe")
 
 
+_metrics_warned = False
+
+
 def _metrics(name: str) -> None:
+    global _metrics_warned
     try:
-        from airflow.stats import Stats
+        from airflow.sdk.observability.stats import Stats
 
         Stats.incr(name)
-    except Exception:
-        return
+    except Exception as exc:
+        if not _metrics_warned:
+            _metrics_warned = True
+            log.debug("chappe: Airflow metrics are unavailable (%s); not counting events", exc)
 
 
 def pick_theme(name: str) -> Theme:
@@ -122,7 +128,7 @@ def get_runtime() -> Runtime | None:
     _loaded = True
     try:
         _runtime = Runtime(load_settings())
-    except ChappeConfigError as exc:
+    except Exception as exc:  # a config error, or anything else: never raise into Airflow
         log.error("chappe is disabled: %s", exc)
         _runtime = None
     return _runtime

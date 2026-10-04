@@ -500,15 +500,20 @@ def test_a_final_event_out_of_budget_logs_an_error_with_the_process_key(
     final = stage(S, S, S, finished=ProcessState.SUCCEEDED)
     with caplog.at_level(logging.WARNING, logger="chappe"):
         assert w.handle(final, EventKind.RUN_FINISHED) is HandleResult.SENT
-    (record,) = [r for r in caplog.records if "budget" in r.getMessage()]
+    (record,) = [r for r in caplog.records if "final event" in r.getMessage()]
     assert record.levelno == logging.ERROR and KEY in record.getMessage()
+    assert "were not sent" in record.getMessage()
+    assert "next event" not in record.getMessage()
 
     caplog.clear()
     now[0] = 100.0
     other_api, other_vars = FakeSlackApi(), FakeVariables()
     other_api.before_post = lambda channel, ts: now.__setitem__(0, 111.0) if ts else None
-    w = writer(other_api, other_vars, theme=StepEntriesTheme(), clock=lambda: now[0])
+    w = writer(
+        other_api, other_vars, theme=StepEntriesTheme(), clock=lambda: now[0], event_budget_s=10.0
+    )
     with caplog.at_level(logging.WARNING, logger="chappe"):
         w.handle(stage(S, S, R), EventKind.STEP_FINISHED)
     (record,) = [r for r in caplog.records if "budget" in r.getMessage()]
     assert record.levelno == logging.WARNING  # a later event sends the rest
+    assert "left to the next event" in record.getMessage()

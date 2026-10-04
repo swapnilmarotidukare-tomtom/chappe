@@ -178,15 +178,20 @@ class Engine:
             if reply_key in state.sent_keys:
                 continue  # a parallel event sent it meanwhile
             if self._clock() >= deadline:
-                # never block (spec 9.3): what was sent is saved, the next event sends the rest;
-                # no event follows the final one, so there it is an error
-                log.log(
-                    logging.ERROR if final else logging.WARNING,
-                    "chappe: time budget spent for %s; %d message(s) left to the next event%s",
-                    key,
-                    len(replies) - index,
-                    " (this was the final event, so they are not sent)" if final else "",
-                )
+                # never block (spec 9.3): what was sent is saved, the next event sends the rest
+                if final:  # no event follows the final one
+                    log.error(
+                        "chappe: out of time on the final event for %s; "
+                        "%d message(s) were not sent",
+                        key,
+                        len(replies) - index,
+                    )
+                else:
+                    log.warning(
+                        "chappe: time budget spent for %s; %d message(s) left to the next event",
+                        key,
+                        len(replies) - index,
+                    )
                 self._metric("chappe.budget_spent")
                 return HandleResult.SENT
             parent = state.parent_ref

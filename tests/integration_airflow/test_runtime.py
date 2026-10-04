@@ -1,5 +1,9 @@
 import logging
+import sys
+import warnings
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -20,6 +24,14 @@ chappe:
       dags: [{dag_id: orders}]
       channel: C0123456789
 """
+
+
+@pytest.fixture
+def fresh_runtime() -> Iterator[None]:
+    """The next get_runtime() loads the config again; the global is reset after the test."""
+    runtime_module.set_runtime(None)
+    yield
+    runtime_module.set_runtime(None)
 
 
 def write_config(tmp_path: Path, text: str = CONFIG) -> Path:
@@ -60,22 +72,62 @@ def test_unknown_theme_falls_back_to_plain(caplog: pytest.LogCaptureFixture) -> 
     assert "unknown theme 'fancy'" in caplog.text
 
 
+@pytest.mark.usefixtures("fresh_runtime")
 def test_missing_config_disables_chappe_once(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.delenv("CHAPPE_CONFIG", raising=False)
-    runtime_module.set_runtime(None)
     assert runtime_module.get_runtime() is None
     assert runtime_module.get_runtime() is None
     assert caplog.text.count("chappe is disabled") == 1
-    runtime_module.set_runtime(None)
 
 
+@pytest.mark.usefixtures("fresh_runtime")
+def test_an_unexpected_load_error_disables_chappe_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken(path: Any = None) -> Any:
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(runtime_module, "load_settings", broken)
+    assert runtime_module.get_runtime() is None
+    assert runtime_module.get_runtime() is None
+    assert caplog.text.count("chappe is disabled") == 1
+    assert "disk on fire" in caplog.text
+
+
+@pytest.mark.usefixtures("fresh_runtime")
 def test_config_is_loaded_from_chappe_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("CHAPPE_CONFIG", str(write_config(tmp_path)))
-    runtime_module.set_runtime(None)
     runtime = runtime_module.get_runtime()
     assert runtime is not None and runtime.resolve(None, "orders") is not None
-    runtime_module.set_runtime(None)
+
+
+def test_metrics_use_the_sdk_stats_without_deprecation_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # re-import, so an import-time deprecation warning would be seen here
+    monkeypatch.delitem(sys.modules, "airflow.stats", raising=False)
+    monkeypatch.delitem(sys.modules, "airflow.sdk.observability.stats", raising=False)
+    counted: list[str] = []
+    from airflow.sdk._shared.observability.metrics import stats
+
+    monkeypatch.setattr(stats.Stats, "incr", lambda name, *a, **k: counted.append(name))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        runtime_module._metrics("chappe.events.sent")
+    assert counted == ["chappe.events.sent"]
+
+
+def test_unavailable_metrics_are_logged_once_at_debug(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setitem(sys.modules, "airflow.sdk.observability.stats", None)  # ImportError
+    monkeypatch.setattr(runtime_module, "_metrics_warned", False)
+    with caplog.at_level(logging.DEBUG, logger="chappe"):
+        runtime_module._metrics("chappe.events.sent")
+        runtime_module._metrics("chappe.events.sent")
+    lines = [r for r in caplog.records if "metrics" in r.getMessage()]
+    assert len(lines) == 1 and lines[0].levelno == logging.DEBUG
