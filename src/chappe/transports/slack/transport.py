@@ -74,14 +74,22 @@ class SlackTransport:
         metadata: Mapping[str, Any] | None,
         *,
         deadline: float,
-    ) -> None:
+        still_current: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Edit the parent. Returns False, without writing, once `still_current()` says no.
+
+        It is asked before every attempt: a retry that waited could otherwise overwrite a newer
+        render written meanwhile (spec 7.1).
+        """
         envelope = _envelope(metadata)
-        self._retry(
-            lambda: self._api.update(
-                channel, ts, text, metadata=envelope, timeout=self._left(deadline)
-            ),
-            deadline,
-        )
+
+        def attempt() -> bool:
+            if still_current is not None and not still_current():
+                return False
+            self._api.update(channel, ts, text, metadata=envelope, timeout=self._left(deadline))
+            return True
+
+        return self._retry(attempt, deadline)
 
     def post_reply(
         self, channel: str, parent_ts: str, text: str, *, broadcast: bool, deadline: float

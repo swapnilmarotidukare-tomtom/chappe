@@ -1,7 +1,7 @@
 # src/chappe/ports/transport.py
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 
 from chappe.core.render import Formatter
@@ -20,8 +20,18 @@ class Transport(Protocol):
         ...
 
     def update_parent(
-        self, channel: str, ts: str, text: str, metadata: Mapping[str, Any], *, deadline: float
-    ) -> None: ...
+        self,
+        channel: str,
+        ts: str,
+        text: str,
+        metadata: Mapping[str, Any],
+        *,
+        deadline: float,
+        still_current: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Edit a top-level message. Before every attempt, retries included, `still_current()`
+        is asked; when it says no, nothing is written and the result is False."""
+        ...
 
     def post_reply(
         self, channel: str, parent_ts: str, text: str, *, broadcast: bool, deadline: float

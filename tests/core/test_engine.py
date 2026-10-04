@@ -315,9 +315,12 @@ class DeadlineTransport(SlackTransport):
         metadata: Mapping[str, Any] | None,
         *,
         deadline: float,
-    ) -> None:
+        still_current: Callable[[], bool] | None = None,
+    ) -> bool:
         self.deadlines.append(deadline)
-        super().update_parent(channel, ts, text, metadata, deadline=deadline)
+        return super().update_parent(
+            channel, ts, text, metadata, deadline=deadline, still_current=still_current
+        )
 
 
 def test_a_raising_metrics_hook_still_falls_back_to_plain(caplog: pytest.LogCaptureFixture) -> None:
@@ -828,3 +831,26 @@ def test_a_save_that_records_a_slack_post_is_made_even_past_the_deadline() -> No
     (parent,) = api.top_level(CHANNEL)
     saved = store_for(variables).load(KEY)
     assert saved is not None and saved.parent_ref == parent.ts
+
+
+def test_a_retrying_older_update_does_not_overwrite_the_final_status() -> None:
+    """A's first edit fails with a 5xx; while it waits to retry, the final event B writes and
+    reads back. A's retry checks the store first and gives up."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    writer(api, variables).handle(stage(S, R, P))
+    final = stage(S, S, S, finished=ProcessState.SUCCEEDED)
+    b = writer(api, variables)
+    results: list[HandleResult] = []
+
+    def final_event_runs_meanwhile(seconds: float) -> None:
+        results.append(b.handle(final, EventKind.RUN_FINISHED))
+
+    transport = SlackTransport(api, clock=lambda: 0.0, sleep=final_event_runs_meanwhile)
+    a = writer(api, variables, transport=transport)
+    api.fail_next(TransportError("internal_error", retryable=True))
+    assert a.handle(stage(S, S, R)) is HandleResult.YIELDED
+    assert results == [HandleResult.SENT]
+    (parent,) = api.top_level(CHANNEL)
+    assert parent.text == render(final).parent.text
+    saved = store_for(variables).load(KEY)
+    assert saved is not None and saved.parent_written == final.watermark

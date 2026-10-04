@@ -333,11 +333,25 @@ class Engine:
     def _write_parent(
         self, key: str, ts: str, text: str, wm: Watermark, deadline: float
     ) -> SentState | None:
-        """Edit the parent `ts`. Returns None when a newer render owns a re-posted parent."""
+        """Edit the parent `ts`. Returns None when a newer render owns the parent: stored before
+        any attempt (an attempt never overwrites a newer render, spec 7.1), or on a re-posted
+        parent."""
         payload = parent_payload(key, wm)
+
+        def still_current() -> bool:
+            stored = self._load(key, deadline)
+            return stored is None or not (
+                stored.watermark is not None and stored.watermark.newer_than(wm)
+            )
+
         try:
-            self._transport.update_parent(
-                self._settings.channel, ts, text, payload, deadline=deadline
+            written = self._transport.update_parent(
+                self._settings.channel,
+                ts,
+                text,
+                payload,
+                deadline=deadline,
+                still_current=still_current,
             )
         except TransportError as exc:
             if exc.code != MESSAGE_NOT_FOUND:
@@ -355,6 +369,9 @@ class Engine:
                 return self._post_parent(key, text, wm, deadline)
             # a lower-ts parent won meanwhile and ours was deleted, or a duplicate took over
             return self._write_parent(key, current.parent_ref, text, wm, deadline)
+        if not written:
+            log.info("chappe: a newer render of %s was stored; not editing the parent", key)
+            return None
         return self._record(
             key, SentState(key, parent_ref=ts, parent_text=text, watermark=wm, parent_written=wm)
         )

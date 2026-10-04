@@ -1,5 +1,5 @@
 # tests/test_ports.py
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from typing import Any
 
@@ -66,9 +66,17 @@ class RecordingTransport:
         return "1.000001"
 
     def update_parent(
-        self, channel: str, ts: str, text: str, metadata: Mapping[str, Any], *, deadline: float
-    ) -> None:
+        self,
+        channel: str,
+        ts: str,
+        text: str,
+        metadata: Mapping[str, Any],
+        *,
+        deadline: float,
+        still_current: Callable[[], bool] | None = None,
+    ) -> bool:
         self.calls.append(("update_parent", ts))
+        return True
 
     def post_reply(
         self, channel: str, parent_ts: str, text: str, *, broadcast: bool, deadline: float

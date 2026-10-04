@@ -206,3 +206,36 @@ def test_every_slack_call_gets_the_time_left_as_its_timeout() -> None:
     reply = transport.post_reply(CHANNEL, parent, "r", broadcast=False, deadline=4)
     transport.delete(CHANNEL, reply, deadline=3.25)
     assert api.timeouts == [7.5, 7.5, 7.0, 1.0, 0.25]
+
+
+def test_an_update_asks_still_current_before_every_attempt() -> None:
+    clock = Clock()
+    api = FakeSlackApi()
+    transport = SlackTransport(api, clock=clock, sleep=clock.sleep)
+    parent = transport.post_parent(CHANNEL, "v1", META, deadline=10)
+    asked: list[int] = []
+
+    def current() -> bool:
+        asked.append(1)
+        return True
+
+    api.fail_next(TransportError("internal_error", retryable=True))
+    assert transport.update_parent(CHANNEL, parent, "v2", META, deadline=10, still_current=current)
+    assert len(asked) == 2  # the first attempt and the retry
+
+
+def test_an_update_that_is_no_longer_current_is_not_retried() -> None:
+    """A newer render was stored while this update waited to retry: writing it would regress."""
+    clock = Clock()
+    api = FakeSlackApi()
+    transport = SlackTransport(api, clock=clock, sleep=clock.sleep)
+    parent = transport.post_parent(CHANNEL, "v1", META, deadline=10)
+    answers = iter([True, False])
+    api.fail_next(TransportError("internal_error", retryable=True))
+    written = transport.update_parent(
+        CHANNEL, parent, "v2", META, deadline=10, still_current=lambda: next(answers)
+    )
+    assert written is False
+    assert [name for name, _ in api.calls].count("update") == 1
+    message = api.message(CHANNEL, parent)
+    assert message is not None and message.text == "v1"
