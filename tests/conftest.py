@@ -106,7 +106,8 @@ def _check_target(target: Any, attempts: list[str] | None = None) -> None:
 
 @pytest.fixture(autouse=True)
 def network_attempts(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
-    """Block non-loopback network use and record each attempt; fail at teardown if any.
+    """Block non-loopback network use (connects, name lookups, datagrams) and record each attempt;
+    fail at teardown if any.
 
     A test that deliberately provokes a block clears the yielded list after asserting on it.
     """
@@ -135,9 +136,36 @@ def network_attempts(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
             _check_target((host,), attempts)
         return real_getaddrinfo(host, *args, **kwargs)
 
+    def lookup(real: Callable[..., Any]) -> Callable[..., Any]:
+        def blocked(host: Any, *args: Any, **kwargs: Any) -> Any:
+            _check_target((host,), attempts)
+            return real(host, *args, **kwargs)
+
+        return blocked
+
+    real_sendto = socket.socket.sendto
+    real_sendmsg = socket.socket.sendmsg
+
+    def sendto(self: socket.socket, data: Any, *args: Any) -> int:
+        # sendto(data, address) or sendto(data, flags, address)
+        if self.family != socket.AF_UNIX and args:
+            _check_target(args[-1], attempts)
+        return real_sendto(self, data, *args)
+
+    def sendmsg(self: socket.socket, buffers: Any, *args: Any, **kwargs: Any) -> int:
+        # sendmsg(buffers[, ancdata[, flags[, address]]])
+        address = args[2] if len(args) > 2 else kwargs.get("address")
+        if self.family != socket.AF_UNIX and address is not None:
+            _check_target(address, attempts)
+        return real_sendmsg(self, buffers, *args, **kwargs)
+
     monkeypatch.setattr(socket.socket, "connect", connect)
     monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
+    monkeypatch.setattr(socket.socket, "sendto", sendto)
+    monkeypatch.setattr(socket.socket, "sendmsg", sendmsg)
     monkeypatch.setattr(socket, "create_connection", create_connection)
     monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    for name in ("gethostbyname", "gethostbyname_ex", "gethostbyaddr"):
+        monkeypatch.setattr(socket, name, lookup(getattr(socket, name)))
     yield attempts
     fail_if_blocked(attempts)

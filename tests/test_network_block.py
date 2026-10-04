@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import socket
+import tempfile
 
 import pytest
 
@@ -64,3 +66,53 @@ def test_ipv6_loopback_connection_is_allowed() -> None:
         port = server.getsockname()[1]
         with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as client:
             client.connect(("::1", port, 0, 0))
+
+
+def test_name_lookups_are_blocked(network_attempts: list[str]) -> None:
+    with pytest.raises(RuntimeError, match=r"network access is blocked in tests: slack\.com"):
+        socket.gethostbyname("slack.com")
+    with pytest.raises(RuntimeError, match=r"network access is blocked in tests: slack\.com"):
+        socket.gethostbyname_ex("slack.com")
+    with pytest.raises(RuntimeError, match=r"network access is blocked in tests: 93\.184\.216\.34"):
+        socket.gethostbyaddr("93.184.216.34")
+    assert network_attempts == ["slack.com", "slack.com", "93.184.216.34"]
+    network_attempts.clear()
+
+
+def test_loopback_name_lookups_are_allowed() -> None:
+    assert socket.gethostbyname("localhost") == "127.0.0.1"
+    assert socket.gethostbyname_ex("127.0.0.1")[2] == ["127.0.0.1"]
+
+
+def test_datagrams_to_the_network_are_blocked(network_attempts: list[str]) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        with pytest.raises(RuntimeError, match="network access is blocked in tests"):
+            sock.sendto(b"x", ("93.184.216.34", 8125))
+        with pytest.raises(RuntimeError, match="network access is blocked in tests"):
+            sock.sendto(b"x", 0, ("93.184.216.34", 8125))
+        with pytest.raises(RuntimeError, match="network access is blocked in tests"):
+            sock.sendmsg([b"x"], [], 0, ("93.184.216.34", 8125))
+    assert network_attempts == ["93.184.216.34"] * 3
+    network_attempts.clear()
+
+
+def test_loopback_and_unix_datagrams_are_allowed() -> None:
+    with (
+        socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server,
+        socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client,
+    ):
+        server.bind(("127.0.0.1", 0))
+        address = server.getsockname()
+        client.sendto(b"a", address)
+        client.sendto(b"b", 0, address)
+        client.sendmsg([b"c"], [], 0, address)
+        assert [server.recv(1) for _ in range(3)] == [b"a", b"b", b"c"]
+    with (
+        tempfile.TemporaryDirectory() as folder,
+        socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as server,
+        socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as client,
+    ):
+        path = os.path.join(folder, "s")
+        server.bind(path)
+        client.sendto(b"u", path)
+        assert server.recv(1) == b"u"
