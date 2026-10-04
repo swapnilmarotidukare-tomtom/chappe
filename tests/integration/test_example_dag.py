@@ -190,6 +190,10 @@ def test_failing_run_shows_the_failed_station_and_alerts_once(
     assert station_names(parent.text) == ["● Extract", "● Transform", "✖ Load", "✖ Report"]
     thread = api.replies(CHANNEL, parent.ts)
     (alert,) = thread
-    assert alert.text.startswith("<@U0123456789> :rotating_light: *chappe_example · ")
-    assert "Load" in alert.text
+    # The alert is built from the run-end DAG callback: the failed steps are named, with no
+    # duration and no error of their own (Report only carries Airflow's upstream-failed note).
+    head, _, tail = alert.text.partition("* · ")
+    assert head.startswith("<@U0123456789> :rotating_light: *chappe_example · ")
+    assert tail.startswith("Load failed; Report failed: An upstream task failed · <")
+    assert "failed after" not in alert.text
     assert_kept(store, run_id, parent.ts)

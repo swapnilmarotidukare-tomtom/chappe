@@ -29,9 +29,9 @@ One parent message per run, edited in place. Three parts, in this order:
 *orders 2026.10.1*
 🟡 In progress · started 10:46 · 6m 15s
 ```text
-●  Extract              1m 04s
+●  Extract
 ┃
-◉  Transform    running 2m 01s
+◉  Transform             since 10:47
 ┆
 ○  Load
 ┆
@@ -55,7 +55,7 @@ glyphs are plain Unicode, distinct by shape (spec §6.4 rule 2: no state by colo
 | Step state | Glyph | Right-hand text |
 |---|---|---|
 | succeeded | `●` | its duration, if known |
-| running | `◉` | `running <duration so far>`, or `running` if the start is unknown |
+| running | `◉` | `since HH:MM` (its start, `ctx.clock`), or `running` if the start is unknown |
 | failed | `✖` | `failed after <duration>`, or `failed` if the duration is unknown |
 | skipped | `◌` | `skipped` |
 | pending | `○` | nothing |
@@ -92,7 +92,9 @@ the first and last stations of the trunk and of each section and replaces the st
 - Thread entries: none. `render()` returns an empty thread tuple.
 - Alerts (spec §6.4 rule 4: a failed process always produces at least one alert): one alert per failed run,
   posted as a thread reply, key `alert:process:failed` (unchanged, stable):
-  `<mention> 🚨 *<title>* · <failed step> failed after <duration>: <error> · <Log link>`. Several failed steps are
+  `<mention> 🚨 *<title>* · <failed step>[ failed after <duration>][: <error>] · <Log link>`. The alert is
+  built from the run-end DAG callback, whose view carries no step times and no error of its own, so in practice
+  it reads `<failed step> failed` (and `: <error>` only when the step view has one). Several failed steps are
   joined with `; `; no failed step known → `<mention> 🚨 *<title>* · Failed`. The alert icon is a token
   (`:rotating_light:`). Mention, error escaping, log links and clipping to `entry_chars` as today.
 
@@ -101,7 +103,7 @@ the first and last stations of the trunk and of each section and replaces the st
 - New `src/chappe/themes/builtin/metro.py` (`MetroTheme`, `name = "metro"`) and `metro.yaml`:
   - `icons`: the status circles per process state, plus `alert: ":rotating_light:"`.
   - `labels`: `Waiting`, `In progress`, `Passed`, `Failed`, `Skipped`.
-  - `extra`: `started`, `running`, `failed_after` ("failed after"), `skipped`, `more` ("more"), and the glyphs
+  - `extra`: `started`, `running`, `since`, `failed_after` ("failed after"), `skipped`, `more` ("more"), and the glyphs
     (`glyph_succeeded`, `glyph_running`, `glyph_failed`, `glyph_skipped`, `glyph_pending`, `line_done`, `line_todo`),
     so a workspace can change the words and glyphs through YAML token overrides like any other token.
     Check against `src/chappe/themes/tokens.py` which token groups exist and how per-state icons are looked up; fit

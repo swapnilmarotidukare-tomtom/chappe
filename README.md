@@ -12,9 +12,9 @@ Chappe reports the progress of Apache Airflow 3 runs to Slack. Each DAG run gets
 *orders 2026.10.1*
 :large_yellow_circle: In progress · started 08:05 · 7m
 ```
-●  Extract                        2m
+●  Extract
 ┃
-◉  Transform              running 5m
+◉  Transform             since 08:07
 ┆
 ○  Load
 ┆
@@ -198,6 +198,7 @@ Where a limit names a Slack message, it is the run's message or a duplicate of i
 
 - Step durations are shown only for a step whose own event Chappe processed. Airflow's runtime read returns states only, so other steps show their state without a duration. With the default `metro` theme, the final message shows no step durations, only the run's total time, because it is rendered from the DAG callback, which has no step times.
 - Applies only to themes that post step replies (none of the built-in themes does): replies whose step had no own callback appear in the order they were sent, not in step order.
+- With the default `metro` theme, the failure alert is built from the run-end DAG callback. It names the failed step or steps, without their duration and, for a step that failed on its own, without its error text. On-call learns which step failed; the error is in the task log, which the alert links when `ui_base_url` is set.
 - If Airflow runs a DAG callback without the run's context (no `dag_run`, no params), a title template that uses params falls back to `<dag_id> · <run_id>` in the final message.
 
 ### Time
