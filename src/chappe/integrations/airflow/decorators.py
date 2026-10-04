@@ -61,12 +61,24 @@ class _MilestoneTask:
             )
         return result
 
-    def expand(self, *args: Any, **kwargs: Any) -> Any:
+    def _warn_mapped(self) -> None:
         log.warning(
             "chappe: mapped tasks are not supported in 0.0.1; %r will not be reported",
             getattr(self._inner, "function", self._inner),
         )
+
+    def expand(self, *args: Any, **kwargs: Any) -> Any:
+        self._warn_mapped()
         return self._inner.expand(*args, **kwargs)
+
+    def partial(self, *args: Any, **kwargs: Any) -> Any:
+        """`.partial(...).expand(...)` maps the task too: warn and leave it unmarked."""
+        self._warn_mapped()
+        return self._inner.partial(*args, **kwargs)
+
+    def override(self, *args: Any, **kwargs: Any) -> _MilestoneTask:
+        """An overridden copy is still a milestone, with the same spec."""
+        return _MilestoneTask(self._inner.override(*args, **kwargs), self._spec)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -84,7 +96,7 @@ def milestone(target: Any = None, title: str | None = None, *, section: str | No
             return _MilestoneTask(target, MilestoneSpec(None, section))
         log.warning("chappe: @milestone cannot mark %r; it will not be reported", target)
         return target
-    spec = MilestoneSpec(target, section)
+    spec = MilestoneSpec(target if isinstance(target, str) else title, section)
 
     def decorate(task_decorator: Any) -> _MilestoneTask:
         return _MilestoneTask(task_decorator, spec)

@@ -188,3 +188,68 @@ def test_marking_failure_does_not_raise(caplog: pytest.LogCaptureFixture) -> Non
         op = Broken(task_id="t")
         assert milestone(op) is op
     assert "could not mark" in caplog.text
+
+
+def test_keyword_title_above_task_is_kept() -> None:
+    with DAG("orders_pipeline", schedule=None) as dag:
+
+        @milestone(title="Geometry")
+        @task
+        def geometry() -> None:
+            return None
+
+        @milestone(title="ID stability", section="Compare")
+        @task
+        def id_stability() -> None:
+            return None
+
+        geometry()
+        id_stability()
+
+    geometry_spec = milestone_spec(dag.get_task("geometry"))
+    stability_spec = milestone_spec(dag.get_task("id_stability"))
+    assert geometry_spec is not None and geometry_spec.title == "Geometry"
+    assert stability_spec is not None
+    assert (stability_spec.title, stability_spec.section) == ("ID stability", "Compare")
+    assert [(s.title, s.section_key) for s in build_structure(dag, process()).steps] == [
+        ("Geometry", "orders_pipeline"),
+        ("ID stability", "Compare"),
+    ]
+
+
+def test_keyword_title_on_an_operator_is_kept() -> None:
+    with DAG("orders_pipeline", schedule=None):
+        op = milestone(EmptyOperator(task_id="geometry"), title="Geometry")
+    spec = milestone_spec(op)
+    assert spec is not None and spec.title == "Geometry"
+
+
+def test_override_keeps_the_milestone() -> None:
+    with DAG("orders_pipeline", schedule=None) as dag:
+
+        @milestone("Convert", section="Prep")
+        @task
+        def convert() -> None:
+            return None
+
+        convert.override(task_id="convert_again")()
+
+    spec = milestone_spec(dag.get_task("convert_again"))
+    assert spec is not None and (spec.title, spec.section) == ("Convert", "Prep")
+    assert [s.task_id for s in build_structure(dag, process()).steps] == ["convert_again"]
+
+
+def test_partial_expand_is_ignored_with_a_warning(caplog: pytest.LogCaptureFixture) -> None:
+    with (
+        caplog.at_level(logging.WARNING, logger="chappe"),
+        DAG("orders_pipeline", schedule=None) as dag,
+    ):
+
+        @milestone("Compare")
+        @task
+        def compare(base: str, version: str) -> None:
+            return None
+
+        compare.partial(base="x").expand(version=["a", "b"])
+    assert "mapped tasks are not supported" in caplog.text
+    assert build_structure(dag, process()).steps == ()
