@@ -36,30 +36,43 @@ done
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 python=${PYTHON:-python3}
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+# Stage inside the repo so the final moves are renames on one filesystem.
+stage=$(mktemp -d "$root/.update-constraints.XXXXXX")
+trap 'rm -rf "$stage"' EXIT
+mkdir "$stage/constraints"
 
+# 1. Fetch (or copy) both files and build them with their headers, all in the stage.
 for py in 3.10 3.12; do
   url="https://raw.githubusercontent.com/apache/airflow/constraints-${version}/constraints-${py}.txt"
   if [[ -n $from ]]; then
-    cp "$from/constraints-${py}.txt" "$tmp/upstream"
+    cp "$from/constraints-${py}.txt" "$stage/upstream"
   else
-    curl --fail --silent --show-error --location --output "$tmp/upstream" "$url"
+    curl --fail --silent --show-error --location --output "$stage/upstream" "$url"
   fi
   # A file fed back from constraints/ already carries the header; do not stack a second one.
-  if [[ $(head -n 1 "$tmp/upstream") == "# Source: "* ]]; then
-    tail -n +2 "$tmp/upstream" >"$tmp/body"
+  if [[ $(head -n 1 "$stage/upstream") == "# Source: "* ]]; then
+    tail -n +2 "$stage/upstream" >"$stage/body"
   else
-    cp "$tmp/upstream" "$tmp/body"
+    cp "$stage/upstream" "$stage/body"
   fi
   {
     printf '# Source: %s\n' "$url"
-    cat "$tmp/body"
-  } >"$root/constraints/airflow-${version}-py${py}.txt"
-  echo "wrote constraints/airflow-${version}-py${py}.txt"
+    cat "$stage/body"
+  } >"$stage/constraints/airflow-${version}-py${py}.txt"
 done
 
-"$python" "$root/scripts/merge_constraints.py" "$version" --root "$root"
+# 2. Merge into a staged copy of pyproject.toml.
+cp -p "$root/pyproject.toml" "$stage/pyproject.toml"
+"$python" "$root/scripts/merge_constraints.py" "$version" --root "$stage"
+
+# 3. Everything succeeded: move the three files into place.
+for py in 3.10 3.12; do
+  name="airflow-${version}-py${py}.txt"
+  mv "$stage/constraints/$name" "$root/constraints/$name"
+  echo "wrote constraints/$name"
+done
+mv "$stage/pyproject.toml" "$root/pyproject.toml"
+echo "wrote pyproject.toml"
 
 cat <<EOF
 Next:

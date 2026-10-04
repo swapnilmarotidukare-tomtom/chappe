@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 PY_OLD, PY_NEW = "3.10", "3.12"
@@ -52,6 +54,8 @@ def read_pins(path: Path) -> dict[str, str]:
         if name in pins:
             raise ValueError(f"{path}: {name} is pinned twice")
         pins[name] = version
+    if not pins:
+        raise ValueError(f"{path}: no 'name==version' pins (empty or not a constraints file)")
     return pins
 
 
@@ -85,10 +89,24 @@ def regenerate(pyproject: str, version: str, block: str) -> str:
         raise ValueError("pyproject.toml must hold exactly one constraint-dependencies block")
     if len(_COMMENT.findall(pyproject)) != 1:
         raise ValueError("pyproject.toml must hold exactly one [tool.uv] table")
+    dev_pin(pyproject)  # exactly one pin to rewrite
     text = _BLOCK.sub(lambda _: block, pyproject)
     text = _PIN.sub(lambda m: f'{m.group(1)}"apache-airflow=={version}",{m.group(3)}', text)
     comment = COMMENT.format(v=version, old=PY_OLD, new=PY_NEW)
     return _COMMENT.sub(lambda _: comment, text)
+
+
+def write_atomically(path: Path, text: str) -> None:
+    """Write next to `path`, then rename over it: a reader never sees a half-written file."""
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(name, path.stat().st_mode & 0o7777)  # mkstemp creates 0600
+        os.replace(name, path)
+    except BaseException:
+        Path(name).unlink(missing_ok=True)
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -99,12 +117,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     pyproject_path = args.root / "pyproject.toml"
-    current = pyproject_path.read_text(encoding="utf-8")
-    version = args.version or dev_pin(current)
-    folder = args.root / "constraints"
-    old = read_pins(folder / f"airflow-{version}-py{PY_OLD}.txt")
-    new = read_pins(folder / f"airflow-{version}-py{PY_NEW}.txt")
-    wanted = regenerate(current, version, render_block(merge(old, new)))
+    try:
+        current = pyproject_path.read_text(encoding="utf-8")
+        version = args.version or dev_pin(current)
+        folder = args.root / "constraints"
+        old = read_pins(folder / f"airflow-{version}-py{PY_OLD}.txt")
+        new = read_pins(folder / f"airflow-{version}-py{PY_NEW}.txt")
+        wanted = regenerate(current, version, render_block(merge(old, new)))
+    except (OSError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
 
     if args.check:
         if wanted == current:
@@ -120,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"pyproject.toml differs from the Airflow {version} constraints", file=sys.stderr)
         return 1
     if wanted != current:
-        pyproject_path.write_text(wanted, encoding="utf-8")
+        write_atomically(pyproject_path, wanted)
     print(f"pyproject.toml: {len(old.keys() | new.keys())} packages for Airflow {version}")
     return 0
 

@@ -148,6 +148,8 @@ def test_update_script_regenerates_the_vendored_files_byte_identically_offline(
     assert result.returncode == 0, result.stdout + result.stderr
     assert not called.exists(), "the download branch ran"
     assert pyproject.read_bytes() == (ROOT / "pyproject.toml").read_bytes()
+    assert pyproject.stat().st_mode == (ROOT / "pyproject.toml").stat().st_mode
+    assert not list(root.glob(".update-constraints.*")), "the stage was not removed"
     for py in ("3.10", "3.12"):
         name = f"airflow-{VERSION}-py{py}.txt"
         assert (root / "constraints" / name).read_bytes() == (
@@ -160,3 +162,99 @@ def test_update_script_without_a_version_prints_usage_and_fails() -> None:
     result = subprocess.run(["bash", str(UPDATE)], capture_output=True, text=True, check=False)
     assert result.returncode == 2
     assert "usage" in result.stderr.lower()
+
+
+def synthetic_repo(root: Path, old: str, new: str, pyproject: str = PYPROJECT) -> Path:
+    (root / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+    folder = root / "constraints"
+    folder.mkdir()
+    (folder / "airflow-9.9.9-py3.10.txt").write_text(old, encoding="utf-8")
+    (folder / "airflow-9.9.9-py3.12.txt").write_text(new, encoding="utf-8")
+    return root / "pyproject.toml"
+
+
+def test_merge_rejects_a_constraints_file_without_pins(tmp_path: Path) -> None:
+    for body in ("", "# Source: https://example.invalid\n\n#\n# only comments\n"):
+        root = tmp_path / str(len(body))
+        root.mkdir()
+        pyproject = synthetic_repo(root, "a==1\n", body)
+        result = merge("9.9.9", "--root", root)
+        assert result.returncode == 1
+        assert "no 'name==version' pins" in result.stderr
+        assert pyproject.read_text(encoding="utf-8") == PYPROJECT
+
+
+def test_merge_rejects_an_html_body(tmp_path: Path) -> None:
+    pyproject = synthetic_repo(tmp_path, "a==1\n", "<!DOCTYPE html>\n<html></html>\n")
+    result = merge("9.9.9", "--root", tmp_path)
+    assert result.returncode == 1 and "not a 'name==version' line" in result.stderr
+    assert pyproject.read_text(encoding="utf-8") == PYPROJECT
+
+
+def test_write_mode_requires_exactly_one_dev_pin(tmp_path: Path) -> None:
+    pin = '  "apache-airflow==1.0.0",  # transitive pins come from the constraints below\n'
+    for name, text in {
+        "none": PYPROJECT.replace(pin, ""),
+        "two": PYPROJECT.replace(pin, pin + pin),
+    }.items():
+        root = tmp_path / name
+        root.mkdir()
+        pyproject = synthetic_repo(root, "a==1\n", "a==1\n", text)
+        result = merge("9.9.9", "--root", root)  # explicit VERSION: the pin is not read for it
+        assert result.returncode == 1, name
+        assert "exactly one" in result.stderr
+        assert pyproject.read_text(encoding="utf-8") == text
+
+
+def run_update_from(
+    tmp_path: Path, downloads: Path
+) -> tuple[Path, subprocess.CompletedProcess[str]]:
+    """Run the shell script on a copy of the repo files with --from and a recording fake curl."""
+    root = copy_repo_files(tmp_path / "repo")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_curl = bin_dir / "curl"
+    fake_curl.write_text(f'#!/bin/sh\ntouch "{tmp_path / "curl-called"}"\nexit 1\n', "utf-8")
+    fake_curl.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    env["PYTHON"] = sys.executable
+    result = subprocess.run(
+        ["bash", str(root / "scripts" / "update-constraints.sh"), "9.9.9", "--from", downloads],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert not (tmp_path / "curl-called").exists(), "the download branch ran"
+    return root, result
+
+
+def snapshot_tree(root: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and "scripts" not in path.parts
+    }
+
+
+def test_a_failed_second_fetch_leaves_the_repo_unchanged(tmp_path: Path) -> None:
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    (downloads / "constraints-3.10.txt").write_text("\n#\na==1\n", encoding="utf-8")
+    # constraints-3.12.txt is missing: the second fetch fails.
+    before = snapshot_tree(copy_repo_files(tmp_path / "before"))
+    root, result = run_update_from(tmp_path, downloads)
+    assert result.returncode != 0
+    assert snapshot_tree(root) == before
+
+
+def test_a_failed_merge_leaves_the_repo_unchanged(tmp_path: Path) -> None:
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    (downloads / "constraints-3.10.txt").write_text("\n#\na==1\n", encoding="utf-8")
+    (downloads / "constraints-3.12.txt").write_text("<html>rate limited</html>\n", "utf-8")
+    before = snapshot_tree(copy_repo_files(tmp_path / "before"))
+    root, result = run_update_from(tmp_path, downloads)
+    assert result.returncode != 0
+    assert "not a 'name==version' line" in result.stderr
+    assert snapshot_tree(root) == before
