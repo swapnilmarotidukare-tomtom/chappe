@@ -18,9 +18,37 @@ from chappe.integrations.airflow.source import process_key
 log = logging.getLogger("chappe")
 
 
+_masker_warned = False
+
+
+def _masked(text: str) -> str:
+    """`text` with the secrets Airflow knows replaced by `***` (spec 10).
+
+    Without the masker (an Airflow that does not export it), the text is sent as it is, and that
+    is logged once.
+    """
+    global _masker_warned
+    try:
+        # re-exported by airflow.sdk.log (3.2), but not listed in its __all__
+        from airflow.sdk.log import redact  # type: ignore[attr-defined]
+    except Exception as exc:
+        if not _masker_warned:
+            _masker_warned = True
+            log.warning(
+                "chappe: Airflow's secrets masker is unavailable (%s); task errors are sent "
+                "to Slack unmasked",
+                exc,
+            )
+        return text
+    return str(redact(text))
+
+
 def _error_text(context: Mapping[str, Any]) -> str | None:
     exc = context.get("exception")
-    return f"{type(exc).__name__}: {exc}"[:300] if exc else None
+    if not exc:
+        return None
+    # mask before trimming: a cut could leave part of a secret that no longer matches
+    return _masked(f"{type(exc).__name__}: {exc}")[:300]
 
 
 def _plain(value: Any) -> Any:

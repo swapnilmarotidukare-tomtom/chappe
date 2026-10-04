@@ -1,4 +1,5 @@
 import logging
+import sys
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -324,3 +325,31 @@ def test_parse_time_check_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     notifier_module._warned_unknown.clear()
     monkeypatch.setattr(runtime_module, "get_runtime", boom)
     assert ChappeNotifier(process="x").process == "x"
+
+
+def test_a_secret_in_the_task_error_is_masked(engine: RecordingEngine) -> None:
+    """Spec 10: error text goes through Airflow's secrets masker before it reaches Slack."""
+    from airflow.sdk.log import mask_secret
+
+    secret = "s3cr3t-chappe-test-value"
+    mask_secret(secret)
+    boundary = ValueError("x" * 280 + secret)  # the secret straddles the 300-character cut
+    callbacks.on_step_failed(task_context(exception=ValueError(f"login {secret} refused")))
+    callbacks.on_step_failed(task_context(exception=boundary))
+    plain, long = (event.error for event in engine.events)
+    assert plain == "ValueError: login *** refused"
+    assert long is not None and len(long) <= 300 and secret[:8] not in long
+
+
+def test_without_the_masker_the_error_is_sent_trimmed_and_logged_once(
+    engine: RecordingEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setitem(sys.modules, "airflow.sdk.log", None)  # the import fails
+    monkeypatch.setattr(callbacks, "_masker_warned", False)
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        for _ in range(2):
+            callbacks.on_step_failed(task_context(exception=ValueError("y" * 400)))
+    assert [event.error for event in engine.events] == [("ValueError: " + "y" * 400)[:300]] * 2
+    assert caplog.text.count("secrets masker") == 1
