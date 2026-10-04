@@ -464,10 +464,12 @@ class Engine:
         )
 
     def _clear_stale(self, key: str, state: SentState, deadline: float) -> SentState:
-        """Delete losing duplicate parents and record them as cleared (contract D2)."""
-        if not state.stale_parents:
-            return state
-        cleared: set[str] = set()
+        """Delete losing duplicate parents and record each as cleared (contract D2).
+
+        Each delete is recorded right after it is made, without a deadline check (it records a
+        Slack call already made); a delete that would start after the deadline is left to the
+        next event.
+        """
         for ts in sorted(state.stale_parents, key=slack_ts_key):
             current = self._load(key, deadline)  # the winner may have changed since `state`
             if current is not None and current.parent_ref == ts:
@@ -483,12 +485,9 @@ class Engine:
                     exc.code,
                 )
                 continue
-            cleared.add(ts)
-        if not cleared:
-            return state
-        self._metric("chappe.duplicate_parent_deleted")
-        # a delete that is not recorded is repeated by the next event and counts as done
-        return self._save(key, SentState(key, cleared_parents=frozenset(cleared)), deadline)
+            self._metric("chappe.duplicate_parent_deleted")
+            state = self._record(key, SentState(key, cleared_parents=frozenset({ts})))
+        return state
 
     def _final_check(self, view: ProcessView, messages: MessageSet, deadline: float) -> None:
         """Rule 3 (contract D3): read the store back once, after the check delay (spent before the

@@ -959,3 +959,23 @@ def test_final_read_back_rewrites_the_parent_even_when_the_store_looks_right() -
     assert w.handle(final, EventKind.RUN_FINISHED) is HandleResult.SENT
     (parent,) = api.top_level(CHANNEL)
     assert parent.text == render(final).parent.text
+
+
+def test_a_duplicate_deleted_past_the_deadline_is_still_recorded() -> None:
+    """The cleared-parent save records a Slack delete already made: never skipped for time."""
+    now = [0.0]
+    api, variables = FakeSlackApi(), FakeVariables()
+    writer(api, variables).handle(stage(S, R, P))
+    loser = api.post(CHANNEL, "duplicate parent")
+    store_for(variables).save(KEY, SentState(KEY, stale_parents=frozenset({loser})))
+
+    class SlowDelete(SlackTransport):
+        def delete(self, channel: str, ts: str, *, deadline: float) -> None:
+            super().delete(channel, ts, deadline=deadline)
+            now[0] = 11.0  # the delete used up the 10s budget
+
+    w = writer(api, variables, clock=lambda: now[0], transport=SlowDelete(api, clock=lambda: 0.0))
+    w.handle(stage(S, R, P))
+    assert api.message(CHANNEL, loser) is None
+    saved = store_for(variables).load(KEY)
+    assert saved is not None and loser in saved.cleared_parents
