@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import airflow.sdk  # configures logging on import: before caplog, as in a worker
 import pytest
 
 from chappe.config.loader import load_settings
@@ -140,8 +141,6 @@ def test_connection_info_holds_only_the_token_and_hides_it(
 ) -> None:
     from types import SimpleNamespace
 
-    import airflow.sdk
-
     from chappe.integrations.airflow.connections import airflow_connection
 
     fake = SimpleNamespace(host="slack.invalid", login="bot", password="xoxb-secret", port=443)
@@ -169,3 +168,41 @@ def test_a_bad_process_is_dropped_with_one_error_and_the_others_run(
     assert "process 'billing' is disabled" in record.getMessage()
     assert "channel ID" in record.getMessage()
     assert "chappe is disabled" not in caplog.text
+
+
+@pytest.mark.usefixtures("fresh_runtime")
+def test_the_secrets_cache_disables_chappe_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A cached Variable read would make the store stale: silence over a duplicate."""
+    monkeypatch.setenv("CHAPPE_CONFIG", str(write_config(tmp_path)))
+    monkeypatch.setenv("AIRFLOW__SECRETS__USE_CACHE", "True")
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        assert runtime_module.get_runtime() is None
+        assert runtime_module.get_runtime() is None
+    (record,) = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert record.levelno == logging.ERROR
+    assert record.getMessage() == (
+        "chappe is disabled: [secrets] use_cache must be False, "
+        "because Chappe's run state must be read fresh"
+    )
+
+
+@pytest.mark.usefixtures("fresh_runtime")
+def test_the_secrets_cache_off_or_unreadable_keeps_chappe_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from airflow.sdk.configuration import conf
+
+    monkeypatch.setenv("CHAPPE_CONFIG", str(write_config(tmp_path)))
+    monkeypatch.setenv("AIRFLOW__SECRETS__USE_CACHE", "False")
+    assert runtime_module.get_runtime() is not None
+
+    def unreadable(*args: Any, **kwargs: Any) -> bool:
+        raise RuntimeError("config unreadable")
+
+    runtime_module.set_runtime(None)
+    monkeypatch.setattr(conf, "getboolean", unreadable)
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        assert runtime_module.get_runtime() is not None  # Airflow's own cache reads it the same way
+    assert "could not read [secrets] use_cache" in caplog.text

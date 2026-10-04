@@ -135,12 +135,38 @@ def _drop_process(name: str, problem: str) -> None:
     log.error("chappe: process %r is disabled: %s", name, problem)
 
 
+SECRETS_CACHE_ERROR = (
+    "chappe is disabled: [secrets] use_cache must be False, "
+    "because Chappe's run state must be read fresh"
+)
+
+
+def _secrets_cache_on() -> bool:
+    """Airflow's `[secrets] use_cache`, read the way the Task SDK's own cache reads it.
+
+    With the cache on, `Variable.get` can return a stale value, so the store would miss a parallel
+    writer's parent and post a duplicate. If the option cannot be read, Airflow's cache cannot
+    either, so Chappe runs.
+    """
+    try:
+        from airflow.sdk.configuration import conf
+
+        return bool(conf.getboolean(section="secrets", key="use_cache", fallback=False))
+    except Exception as exc:
+        log.warning("chappe: could not read [secrets] use_cache (%s); assuming it is off", exc)
+        return False
+
+
 def get_runtime() -> Runtime | None:
     global _runtime, _loaded
     if _loaded:
         return _runtime
     _loaded = True
     try:
+        if _secrets_cache_on():
+            log.error(SECRETS_CACHE_ERROR)
+            _runtime = None
+            return None
         _runtime = Runtime(load_settings(on_process_error=_drop_process))
     except Exception as exc:  # a config error, or anything else: never raise into Airflow
         log.error("chappe is disabled: %s", exc)

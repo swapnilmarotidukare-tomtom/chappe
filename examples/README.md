@@ -22,11 +22,14 @@ export AIRFLOW_HOME="$PWD/.airflow"
 export AIRFLOW__CORE__DAGS_FOLDER="$PWD/examples/dags"
 export AIRFLOW__CORE__LOAD_EXAMPLES=False
 export AIRFLOW__CORE__SENSITIVE_VAR_CONN_NAMES=chappe   # Chappe's Variables show masked in the UI
+export AIRFLOW__SECRETS__USE_CACHE=False   # the default; with the cache on, Chappe disables itself
 export CHAPPE_CONFIG="$PWD/examples/chappe.yaml"
 # macOS only: without these, Slack calls in the forked DAG-processor child crash (objc fork safety)
 export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES no_proxy='*'
 airflow standalone
 ```
+
+Chappe needs Airflow's `[secrets] use_cache` to be `False` (the default): with the cache on, `Variable.get` can return a stale run state and Chappe would post duplicates. When it is on, Chappe logs "chappe is disabled: [secrets] use_cache must be False, because Chappe's run state must be read fresh" once per process and sends nothing.
 
 `airflow standalone` prints the admin password. The UI is at http://localhost:8080. Use the same exports in every terminal you use below.
 
