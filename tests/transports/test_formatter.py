@@ -9,8 +9,8 @@ def test_escapes_slack_control_characters() -> None:
 
 
 def test_link_escapes_label_and_url_separators() -> None:
-    expected = "<https://a.example/x%7Cy%3Ez|Run &lt;1&gt;>"
-    assert fmt.link("https://a.example/x|y>z", "Run <1>") == expected
+    expected = "<https://a.invalid/x%7Cy%3Ez|Run &lt;1&gt;>"
+    assert fmt.link("https://a.invalid/x|y>z", "Run <1>") == expected
 
 
 def test_mentions_and_icons_pass_through() -> None:
@@ -19,4 +19,4 @@ def test_mentions_and_icons_pass_through() -> None:
 
 
 def test_link_escapes_ampersand_and_angle_brackets_in_url() -> None:
-    assert fmt.link("http://a<b&c", "x") == "<http://a%3Cb&amp;c|x>"
+    assert fmt.link("http://a.invalid/<b&c", "x") == "<http://a.invalid/%3Cb&amp;c|x>"

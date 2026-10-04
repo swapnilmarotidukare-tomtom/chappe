@@ -53,9 +53,9 @@ def test_valid_config_loads_with_defaults(tmp_path: Path) -> None:
 
 
 def test_ui_base_url_is_read_from_defaults(tmp_path: Path) -> None:
-    text = with_defaults("    ui_base_url: https://airflow.example.com\n")
+    text = with_defaults("    ui_base_url: https://airflow.invalid\n")
     settings = load_settings(write(tmp_path, text))
-    assert settings.defaults.ui_base_url == "https://airflow.example.com"
+    assert settings.defaults.ui_base_url == "https://airflow.invalid"
 
 
 def test_only_the_airflow_variable_store_is_accepted(tmp_path: Path) -> None:

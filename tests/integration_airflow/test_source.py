@@ -18,7 +18,7 @@ from chappe.integrations.airflow.source import AirflowSource, map_state, process
 T0 = datetime(2026, 10, 2, 8, 5, tzinfo=timezone.utc)
 NOW = T0 + timedelta(hours=2)
 RUN = "manual__2026-10-02T08:05:00+00:00"
-UI = "http://airflow:8080"
+UI = "http://airflow.invalid:8080"
 
 
 class FakeReader:

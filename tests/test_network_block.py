@@ -16,16 +16,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_non_loopback_connection_is_blocked(network_attempts: list[str]) -> None:
-    with pytest.raises(RuntimeError, match=r"network access is blocked in tests: slack\.com"):
-        socket.create_connection(("slack.com", 443), timeout=1)
+    with pytest.raises(RuntimeError, match=r"network access is blocked in tests: slack\.invalid"):
+        socket.create_connection(("slack.invalid", 443), timeout=1)
     with pytest.raises(RuntimeError, match="network access is blocked in tests"):
-        socket.getaddrinfo("slack.com", 443)
+        socket.getaddrinfo("slack.invalid", 443)
     with (
         socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock,
         pytest.raises(RuntimeError, match="network access is blocked in tests"),
     ):
-        sock.connect(("93.184.216.34", 80))
-    assert network_attempts[0] == "slack.com"
+        sock.connect(("example.invalid", 80))
+    assert network_attempts[0] == "slack.invalid"
     network_attempts.clear()  # deliberate: the teardown check would otherwise fail this test
 
 
@@ -45,10 +45,10 @@ def test_blocked_attempt_fails_the_test_even_if_the_error_is_swallowed(
     network_attempts: list[str],
 ) -> None:
     with contextlib.suppress(Exception):  # what a catch-all callback would do
-        socket.create_connection(("slack.com", 443), timeout=1)
-    assert network_attempts == ["slack.com"]
+        socket.create_connection(("slack.invalid", 443), timeout=1)
+    assert network_attempts == ["slack.invalid"]
     # The teardown runs exactly this check, so a swallowed raise still fails the test.
-    with pytest.raises(pytest.fail.Exception, match=r"slack\.com"):
+    with pytest.raises(pytest.fail.Exception, match=r"slack\.invalid"):
         fail_if_blocked(network_attempts)
     network_attempts.clear()
 
@@ -71,14 +71,19 @@ def test_ipv6_loopback_connection_is_allowed() -> None:
             client.connect(("::1", port, 0, 0))
 
 
+# Address-only APIs (gethostbyaddr, sendto, sendmsg) get 192.0.2.1: TEST-NET-1 (RFC 5737),
+# reserved for documentation and never routed, since an .invalid name is not an address.
+TEST_NET_ADDRESS = "192.0.2.1"
+
+
 def test_name_lookups_are_blocked(network_attempts: list[str]) -> None:
-    with pytest.raises(RuntimeError, match=r"network access is blocked in tests: slack\.com"):
-        socket.gethostbyname("slack.com")
-    with pytest.raises(RuntimeError, match=r"network access is blocked in tests: slack\.com"):
-        socket.gethostbyname_ex("slack.com")
-    with pytest.raises(RuntimeError, match=r"network access is blocked in tests: 93\.184\.216\.34"):
-        socket.gethostbyaddr("93.184.216.34")
-    assert network_attempts == ["slack.com", "slack.com", "93.184.216.34"]
+    with pytest.raises(RuntimeError, match=r"network access is blocked in tests: slack\.invalid"):
+        socket.gethostbyname("slack.invalid")
+    with pytest.raises(RuntimeError, match=r"network access is blocked in tests: slack\.invalid"):
+        socket.gethostbyname_ex("slack.invalid")
+    with pytest.raises(RuntimeError, match=r"network access is blocked in tests: 192\.0\.2\.1"):
+        socket.gethostbyaddr(TEST_NET_ADDRESS)
+    assert network_attempts == ["slack.invalid", "slack.invalid", TEST_NET_ADDRESS]
     network_attempts.clear()
 
 
@@ -90,12 +95,12 @@ def test_loopback_name_lookups_are_allowed() -> None:
 def test_datagrams_to_the_network_are_blocked(network_attempts: list[str]) -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         with pytest.raises(RuntimeError, match="network access is blocked in tests"):
-            sock.sendto(b"x", ("93.184.216.34", 8125))
+            sock.sendto(b"x", (TEST_NET_ADDRESS, 8125))
         with pytest.raises(RuntimeError, match="network access is blocked in tests"):
-            sock.sendto(b"x", 0, ("93.184.216.34", 8125))
+            sock.sendto(b"x", 0, (TEST_NET_ADDRESS, 8125))
         with pytest.raises(RuntimeError, match="network access is blocked in tests"):
-            sock.sendmsg([b"x"], [], 0, ("93.184.216.34", 8125))
-    assert network_attempts == ["93.184.216.34"] * 3
+            sock.sendmsg([b"x"], [], 0, (TEST_NET_ADDRESS, 8125))
+    assert network_attempts == [TEST_NET_ADDRESS] * 3
     network_attempts.clear()
 
 

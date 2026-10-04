@@ -20,7 +20,7 @@ from chappe.transports.slack.formatter import SlackFormatter
 
 BASE = datetime(2026, 10, 2, 8, 5, tzinfo=timezone.utc)
 TEST_MENTION = "<!subteam^S0TEST>"
-RUN_URL = "https://airflow.example/dags/orders/runs/run_1"
+RUN_URL = "https://airflow.invalid/dags/orders/runs/run_1"
 
 
 def _slug(text: str) -> str:

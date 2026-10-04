@@ -1,5 +1,5 @@
 === parent ===
-*orders 2026.10.1* · :white_check_mark: Passed · 5/5 steps · <https://airflow.example/dags/orders/runs/run_1|Airflow run>
+*orders 2026.10.1* · :white_check_mark: Passed · 5/5 steps · <https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
 === fallback ===
 orders 2026.10.1: Passed (5/5)
 === thread ===

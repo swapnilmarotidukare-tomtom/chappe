@@ -18,7 +18,7 @@ from chappe.themes.builtin.plain import PlainTheme
 CONFIG = """\
 chappe:
   defaults:
-    ui_base_url: http://localhost:8080
+    ui_base_url: http://airflow.invalid:8080
   processes:
     orders:
       dags: [{dag_id: orders}]
