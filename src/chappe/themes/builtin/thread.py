@@ -30,7 +30,7 @@ class ThreadTheme:
 
     def _parent(self, view: ProcessView, ctx: RenderContext) -> str:
         head = f"{ctx.icon(view.state)} {ctx.fmt.bold(view.title)} · {ctx.label(view.state)}"
-        if view.duration is not None:
+        if view.duration is not None and view.state is not ProcessState.PENDING:
             head += f" · {ctx.duration(view.duration)}"
         if view.started_at is not None:
             head += f" · {ctx.tokens.extra.get('started', 'started')} {ctx.clock(view.started_at)}"

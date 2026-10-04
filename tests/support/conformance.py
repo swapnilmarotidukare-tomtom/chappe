@@ -10,7 +10,7 @@ from typing import Any, ClassVar
 import pytest
 
 from chappe.core.messages import MessageSet
-from chappe.core.model import StepState
+from chappe.core.model import ProcessState, StepState
 from chappe.core.render import RenderContext
 from chappe.core.view import ProcessView, StepView
 from chappe.ports.theme import Theme
@@ -19,6 +19,9 @@ from tests.support.samples import FAILED_SAMPLES, SAMPLES, SINGLE_SECTION_SAMPLE
 ALL_SAMPLES: tuple[str, ...] = tuple(sorted(SAMPLES))
 UNFINISHED_SAMPLES: tuple[str, ...] = tuple(
     name for name in ALL_SAMPLES if not SAMPLES[name].state.finished
+)
+PENDING_SAMPLES: tuple[str, ...] = tuple(
+    name for name in ALL_SAMPLES if SAMPLES[name].state is ProcessState.PENDING
 )
 
 
@@ -99,6 +102,16 @@ class ThemeConformance:
     def test_single_section_has_no_section_header(self, sample: str) -> None:
         title = SAMPLES[sample].sections[0].title
         assert title not in self.render(sample).parent.text
+
+    @pytest.mark.parametrize("sample", PENDING_SAMPLES)
+    def test_pending_process_shows_no_duration(self, sample: str) -> None:
+        view = SAMPLES[sample]
+        assert view.duration is not None
+        for later in (timedelta(0), timedelta(hours=3)):
+            messages = self.render(sample, later=later)
+            took = self.context().duration(view.duration + later)
+            assert took not in messages.parent.text, "a run with no step started has no duration"
+        assert self.render(sample).parent == self.render(sample, later=timedelta(hours=3)).parent
 
     @pytest.mark.parametrize("sample", UNFINISHED_SAMPLES)
     def test_untimed_steps_get_no_thread_entries(self, sample: str) -> None:
