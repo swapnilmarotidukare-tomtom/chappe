@@ -19,7 +19,7 @@ chappe = "chappe.cli:main"
 
 [dependency-groups]
 dev = [
-  "apache-airflow>=3.2",
+  "apache-airflow>=3.2,<3.3",
   "hypothesis>=6.100",
   "import-linter>=2.0",
   "mypy>=1.10",

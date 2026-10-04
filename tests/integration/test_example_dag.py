@@ -22,8 +22,9 @@ from tests.support.fakes import FakeSlackApi, FakeVariables
 
 pytestmark = [
     pytest.mark.integration,
-    # Airflow's in-process execution API client (dag.test), not Chappe
+    # raised inside Airflow during dag.test() (its execution API client, its ORM), not by Chappe
     pytest.mark.filterwarnings("ignore:Using `httpx` with `starlette.testclient` is deprecated"),
+    pytest.mark.filterwarnings("ignore:The ``noload`` loader strategy is deprecated"),
 ]
 ROOT = Path(__file__).resolve().parents[2]
 DAGS = ROOT / "examples/dags"
