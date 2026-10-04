@@ -1,0 +1,8 @@
+=== parent ===
+:large_yellow_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · In progress · 1h 23m · started 08:05
+:white_check_mark: Parquet → Delta
+:hourglass_flowing_sand: Geometry · running since 09:23
+:white_circle: Aggregates
+=== thread ===
+[step:main.geometry:started] :hourglass_flowing_sand: *Geometry* · started 09:23
+=== alerts ===

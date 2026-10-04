@@ -1,0 +1,7 @@
+=== parent ===
+:large_green_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · Passed in 5h 54m · started 08:05
+=== thread ===
+[step:main.parquet_delta:succeeded] :white_check_mark: *Parquet → Delta* · Passed
+[step:main.geometry:succeeded] :white_check_mark: *Geometry* · Passed
+[step:main.aggregates:succeeded] :white_check_mark: *Aggregates* · Passed
+=== alerts ===

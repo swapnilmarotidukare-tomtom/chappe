@@ -1,0 +1,6 @@
+=== parent ===
+:large_yellow_circle: *<https://airflow.invalid/dags/orders/runs/run_1|Ünïcødé &lt;orders&gt; &amp; co>* · In progress · 5m · started 08:05
+:hourglass_flowing_sand: Generate &amp; consolidate &lt;aggregates&gt; für Ünïcødé xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx · running since 08:05
+=== thread ===
+[step:main.generate_consolidate_aggregates_f_r_n_c_d_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx:started] :hourglass_flowing_sand: *Generate &amp; consolidate &lt;aggregates&gt; für Ünïcødé xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx* · started 08:05
+=== alerts ===

@@ -1,0 +1,12 @@
+=== parent ===
+:large_yellow_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · In progress · 5h 54m · started 08:05
+*Prepare* · 3 of 3 done
+:white_check_mark: Parquet → Delta
+:white_check_mark: Geometry
+:white_check_mark: Aggregates
+*Regression vs baseline 2026.10.0* · 0 of 2 done
+:hourglass_flowing_sand: ID stability · running since 13:54
+:white_circle: Regression
+=== thread ===
+[step:regression_vs_baseline_2026_10_0.id_stability:started] :hourglass_flowing_sand: *ID stability* · started 13:54
+=== alerts ===

@@ -48,7 +48,7 @@ def test_valid_config_loads_with_defaults(tmp_path: Path) -> None:
     assert settings.defaults.transport.type == "slack"
     assert settings.defaults.transport.connection_id == "chappe_slack"
     assert settings.defaults.ui_base_url is None
-    assert settings.theme_for(process).name == "metro"
+    assert settings.theme_for(process).name == "ledger"
     assert process.milestones["cleanup"].hidden
     assert settings.process_for_dag("other") is None
 
@@ -189,7 +189,7 @@ def test_the_removed_thread_theme_is_rejected_with_the_new_list(tmp_path: Path) 
     text = with_defaults("    theme: {name: thread}\n")
     with pytest.raises(
         ChappeConfigError,
-        match=r"defaults\.theme: unknown theme 'thread'; available themes: metro, plain",
+        match=r"defaults\.theme: unknown theme 'thread'; available themes: ledger, metro, plain",
     ):
         load_settings(write(tmp_path, text))
 

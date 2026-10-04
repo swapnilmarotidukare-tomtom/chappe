@@ -101,6 +101,7 @@ class Runtime:
             fmt=transport.formatter,
             tz=ZoneInfo(defaults.time.timezone),
             alert_mention=process.alerts.mention,
+            collapse_done_sections=theme_config.collapse_done_sections,
         )
         return Engine(
             source=source,

@@ -148,7 +148,8 @@ Found at `chappe.defaults.theme`, `chappe.processes.<name>.theme`.
 
 | Key | Type | Default | Required | Description |
 |---|---|---|---|---|
-| `name` | string | `"metro"` | no | `metro` (default) or `plain` (the flat fallback). |
+| `name` | string | `"ledger"` | no | `ledger` (default), `metro`, or `plain` (the flat fallback). |
+| `collapse_done_sections` | boolean | `false` | no | ledger: show a fully done section as one line instead of listing its steps. |
 | `tokens` | mapping or null | `null` | no | Icon and label overrides; `extends` names the theme the tokens start from. |
 
 ### `TimeConfig`

@@ -45,7 +45,12 @@ class ThemeConfig(_Model):
     """How messages look."""
 
     name: str = Field(
-        default="metro", description="`metro` (default) or `plain` (the flat fallback)."
+        default="ledger",
+        description="`ledger` (default), `metro`, or `plain` (the flat fallback).",
+    )
+    collapse_done_sections: bool = Field(
+        default=False,
+        description="ledger: show a fully done section as one line instead of listing its steps.",
     )
     tokens: dict[str, Any] | None = Field(
         default=None,

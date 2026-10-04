@@ -1,0 +1,14 @@
+=== parent ===
+:red_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · Failed after 10h 24m · started 08:05
+*Regression vs baseline 2026.10.0* · 1 passed · 1 failed
+:white_check_mark: ID stability
+:x: Regression · Failed
+=== thread ===
+[step:prepare.parquet_delta:succeeded] :white_check_mark: *Parquet → Delta* · Passed
+[step:prepare.geometry:succeeded] :white_check_mark: *Geometry* · Passed
+[step:prepare.aggregates:succeeded] :white_check_mark: *Aggregates* · Passed
+[step:regression_vs_baseline_2026_10_0.id_stability:succeeded] :white_check_mark: *ID stability* · Passed
+[step:regression_vs_baseline_2026_10_0.regression:failed] :x: *Regression* · Failed
+Executor ran out of memory after 3 retries
+=== alerts ===
+[alert:process:failed] <!subteam^S0TEST> :red_circle: *orders 2026.10.1* · Regression: Executor ran out of memory after 3 retries · <https://airflow.invalid/dags/orders/runs/run_1/tasks/regression|Log>
