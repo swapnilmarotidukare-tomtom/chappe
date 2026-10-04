@@ -239,3 +239,66 @@ def test_an_update_that_is_no_longer_current_is_not_retried() -> None:
     assert [name for name, _ in api.calls].count("update") == 1
     message = api.message(CHANNEL, parent)
     assert message is not None and message.text == "v1"
+
+
+def test_a_duplicate_delete_makes_one_request_and_never_retries() -> None:
+    clock = Clock()
+    api = FakeSlackApi()
+    transport = SlackTransport(api, clock=clock, sleep=clock.sleep)
+    parent = api.post(CHANNEL, "duplicate")
+    api.fail_next(TransportError("ratelimited", retryable=True, retry_after=1))
+    with pytest.raises(TransportError, match="ratelimited"):
+        transport.delete_duplicate(CHANNEL, parent, deadline=10, still_stale=lambda: True)
+    assert [name for name, _ in api.calls].count("delete") == 1
+    assert clock.now == 0  # no wait for a retry
+    assert api.message(CHANNEL, parent) is not None
+
+
+def test_a_duplicate_that_is_no_longer_stale_is_not_deleted() -> None:
+    api = FakeSlackApi()
+    parent = api.post(CHANNEL, "now the winner")
+    transport = SlackTransport(api, clock=Clock())
+    assert not transport.delete_duplicate(CHANNEL, parent, deadline=10, still_stale=lambda: False)
+    assert [name for name, _ in api.calls].count("delete") == 0
+    assert api.message(CHANNEL, parent) is not None
+
+
+def test_a_duplicate_delete_past_the_deadline_asks_nothing_and_sends_nothing() -> None:
+    clock = Clock()
+    clock.now = 10.0
+    api = FakeSlackApi()
+    parent = api.post(CHANNEL, "duplicate")
+    asked: list[int] = []
+
+    def stale() -> bool:
+        asked.append(1)
+        return True
+
+    transport = SlackTransport(api, clock=clock)
+    with pytest.raises(TransportError) as info:
+        transport.delete_duplicate(CHANNEL, parent, deadline=10, still_stale=stale)
+    assert (info.value.code, info.value.retryable) == ("deadline", True)
+    assert asked == []
+    assert [name for name, _ in api.calls].count("delete") == 0
+
+
+def test_a_duplicate_that_is_already_gone_counts_as_deleted() -> None:
+    clock = Clock()
+    clock.now = 2.5
+    api = FakeSlackApi()
+    transport = SlackTransport(api, clock=clock)
+    parent = api.post(CHANNEL, "duplicate")
+    assert transport.delete_duplicate(CHANNEL, parent, deadline=10, still_stale=lambda: True)
+    assert transport.delete_duplicate(CHANNEL, parent, deadline=10, still_stale=lambda: True)
+    assert api.deleted == [(CHANNEL, parent)]
+    assert api.timeouts == [7.5, 7.5]  # the time left, as for every other call
+
+
+def test_any_other_duplicate_delete_error_is_raised() -> None:
+    api = FakeSlackApi()
+    parent = api.post(CHANNEL, "duplicate")
+    api.fail_next(TransportError("cant_delete_message", retryable=False))
+    with pytest.raises(TransportError, match="cant_delete_message"):
+        SlackTransport(api, clock=Clock()).delete_duplicate(
+            CHANNEL, parent, deadline=10, still_stale=lambda: True
+        )

@@ -42,3 +42,11 @@ class Transport(Protocol):
     def delete(self, channel: str, ts: str, *, deadline: float) -> None:
         """Delete a message. A message that is already gone counts as deleted."""
         ...
+
+    def delete_duplicate(
+        self, channel: str, ts: str, *, deadline: float, still_stale: Callable[[], bool]
+    ) -> bool:
+        """Delete a duplicate parent with one request, never retried. Right before it, after the
+        deadline check, `still_stale()` is asked; when it says no, nothing is deleted and the
+        result is False. A message that is already gone counts as deleted (True)."""
+        ...

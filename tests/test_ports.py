@@ -87,6 +87,12 @@ class RecordingTransport:
     def delete(self, channel: str, ts: str, *, deadline: float) -> None:
         self.calls.append(("delete", ts))
 
+    def delete_duplicate(
+        self, channel: str, ts: str, *, deadline: float, still_stale: Callable[[], bool]
+    ) -> bool:
+        self.calls.append(("delete_duplicate", ts))
+        return still_stale()
+
 
 class NoMilestones:
     def snapshot(self, event: ChappeEvent) -> ProcessView | None:
@@ -111,8 +117,9 @@ def test_transport_shape() -> None:
     transport.update_parent("C123", ts, "Orders done", meta, deadline=10.0)
     transport.post_reply("C123", ts, "extract done", broadcast=False, deadline=10.0)
     transport.delete("C123", "0.5", deadline=10.0)
+    assert transport.delete_duplicate("C123", "0.6", deadline=10.0, still_stale=lambda: True)
     names = [name for name, _ in transport.calls]
-    assert names == ["post_parent", "update_parent", "post_reply", "delete"]
+    assert names == ["post_parent", "update_parent", "post_reply", "delete", "delete_duplicate"]
     assert transport.formatter.bold("x") == "x"
 
 

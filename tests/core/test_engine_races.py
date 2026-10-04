@@ -3,11 +3,15 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable, Mapping
 from typing import Any
 
+import pytest
+
 from chappe.core.engine import HandleResult
+from chappe.core.errors import TransportError
 from chappe.core.events import EventKind
 from chappe.core.model import ProcessState, StepState
 from chappe.core.reconcile import SentState
@@ -313,5 +317,142 @@ def test_a_stale_parent_that_won_again_meanwhile_is_not_deleted() -> None:
     w = writer(api, variables, before_read=first_wins_again)
     w.handle(stage(S, S, S))
     assert api.message(CHANNEL, first.ts) is not None
+    saved = shared.load(KEY)
+    assert saved is not None and first.ts not in saved.cleared_parents
+
+
+class ClaimAfterEdit(SlackTransport):
+    """Runs `meanwhile` once, right after its first parent edit reached Slack."""
+
+    def __init__(self, api: FakeSlackApi, meanwhile: Callable[[], None]) -> None:
+        super().__init__(api, clock=lambda: 0.0)
+        self._meanwhile: Callable[[], None] | None = meanwhile
+
+    def update_parent(
+        self,
+        channel: str,
+        ts: str,
+        text: str,
+        metadata: Mapping[str, Any] | None,
+        *,
+        deadline: float,
+        still_current: Callable[[], bool] | None = None,
+    ) -> bool:
+        written = super().update_parent(
+            channel, ts, text, metadata, deadline=deadline, still_current=still_current
+        )
+        if self._meanwhile is not None:
+            meanwhile, self._meanwhile = self._meanwhile, None
+            meanwhile()
+        return written
+
+
+def test_a_delayed_duplicate_delete_never_removes_the_winner_that_got_the_final_status(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Owner's item 1 (window.py): the final event B edited P1 while P1 was the winner. Before B
+    records it, a parallel first event D claims P2 with a newer view (P2 wins) and event X sets out
+    to delete P1, but Slack answers X with a 429. B records P1, which wins again, and finishes. A
+    retry of X's delete would land after B's check and remove P1 with the final status, leaving
+    P2 "In progress" forever. X makes one attempt only and leaves the duplicate."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    shared = store_for(variables)
+    writer(api, variables).handle(stage(R, P, P))
+    (first,) = api.top_level(CHANNEL)
+    d_view = stage(S, R, P)
+    x_paused, b_done = threading.Event(), threading.Event()
+    results: dict[str, HandleResult] = {}
+    second: list[str] = []
+
+    def x_waits_out_the_retry(seconds: float) -> None:
+        x_paused.set()
+        assert b_done.wait(WAIT_S)
+
+    held = SlackTransport(api, clock=lambda: 0.0, sleep=x_waits_out_the_retry)
+    x = writer(api, variables, transport=held)
+
+    def run_x() -> None:
+        try:
+            results["x"] = x.handle(d_view)
+        finally:
+            x_paused.set()
+
+    def parallel_claim_and_delete() -> None:
+        text = render(d_view).parent.text
+        second.append(api.post(CHANNEL, text))
+        wm = d_view.watermark
+        claim = SentState(
+            KEY,
+            parent_ref=second[0],
+            parent_text=text,
+            watermark=wm,
+            parent_written=wm,
+            parent_wms={second[0]: wm},
+        )
+        shared.save(KEY, claim)
+        api.fail_next(TransportError("ratelimited", retryable=True, retry_after=1.0))
+        thread_x = threading.Thread(target=run_x)
+        thread_x.start()
+        threads.append(thread_x)
+        assert x_paused.wait(WAIT_S)
+
+    threads: list[threading.Thread] = []
+    final = stage(S, S, F, finished=ProcessState.FAILED)
+    b = writer(api, variables, transport=ClaimAfterEdit(api, parallel_claim_and_delete))
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        try:
+            results["b"] = b.handle(final, EventKind.RUN_FINISHED)
+        finally:
+            b_done.set()
+        for thread in threads:
+            thread.join(WAIT_S)
+    assert results["b"] is HandleResult.SENT
+
+    expected = render(final)
+    winner = api.message(CHANNEL, first.ts)
+    assert winner is not None and winner.text == expected.parent.text
+    assert [m.text for m in api.replies(CHANNEL, first.ts)] == [
+        *(e.text for e in expected.thread),
+        *(a.text for a in expected.alerts),
+    ]
+    saved = shared.load(KEY)
+    assert saved is not None and saved.parent_ref == first.ts and saved.watermark is not None
+    assert saved.watermark.finished
+    warning = next(
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "duplicate parent" in r.getMessage()
+    )
+    assert KEY in warning and first.ts in warning and second[0] in warning
+
+    writer(api, variables).handle(stage(S, S, F))  # a later event deletes the duplicate P2
+    assert [m.ts for m in api.top_level(CHANNEL)] == [first.ts]
+
+
+def test_the_winner_is_read_inside_the_delete_attempt() -> None:
+    """The store is read again inside the single delete attempt, after its deadline check and
+    with nothing in between: a parent that won again up to that moment is kept."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    shared = store_for(variables)
+    writer(api, variables).handle(stage(R, P, P))
+    (first,) = api.top_level(CHANNEL)
+    second = api.post(CHANNEL, "duplicate parent")
+    shared.save(
+        KEY, SentState(KEY, parent_ref=second, parent_wms={second: stage(S, R, P).watermark})
+    )
+    won_again: list[int] = []
+
+    def first_wins_again_at_the_attempt() -> float:
+        if not won_again:  # the transport's first look at the clock: the attempt has begun
+            won_again.append(1)
+            newer = stage(S, S, R).watermark
+            shared.save(KEY, SentState(KEY, parent_ref=first.ts, parent_wms={first.ts: newer}))
+        return 0.0
+
+    transport = SlackTransport(api, clock=first_wins_again_at_the_attempt)
+    writer(api, variables, transport=transport).handle(stage(S, S, S))
+    assert won_again
+    assert api.message(CHANNEL, first.ts) is not None
+    assert (CHANNEL, first.ts) not in api.deleted
     saved = shared.load(KEY)
     assert saved is not None and first.ts not in saved.cleared_parents

@@ -180,6 +180,36 @@ def test_any_event_deletes_leftover_duplicate_parents() -> None:
     assert loser in saved.cleared_parents and not saved.stale_parents
 
 
+def test_a_failed_duplicate_delete_is_left_to_the_next_event(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Each event makes one attempt to delete a duplicate parent, never a retry: on failure the
+    duplicate stays, a WARNING names the process and both parents, and the next event tries."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    w = writer(api, variables)
+    w.handle(stage(S, R, P))
+    (winner,) = api.top_level(CHANNEL)
+    loser = api.post(CHANNEL, "duplicate parent")
+    store_for(variables).save(KEY, SentState(KEY, stale_parents=frozenset({loser})))
+    api.fail_next(TransportError("ratelimited", retryable=True, retry_after=1.0))
+
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        assert w.handle(stage(S, R, P)) is HandleResult.SKIPPED
+    assert [name for name, _ in api.calls].count("delete") == 1
+    assert api.message(CHANNEL, loser) is not None
+    warning = next(
+        r for r in caplog.records if r.levelno == logging.WARNING and loser in r.getMessage()
+    )
+    assert KEY in warning.getMessage() and winner.ts in warning.getMessage()
+    saved = store_for(variables).load(KEY)
+    assert saved is not None and loser in saved.stale_parents
+
+    assert w.handle(stage(S, R, P)) is HandleResult.SKIPPED
+    assert api.message(CHANNEL, loser) is None
+    saved = store_for(variables).load(KEY)
+    assert saved is not None and loser in saved.cleared_parents
+
+
 def test_a_parent_dropped_by_a_stale_write_is_saved_again() -> None:
     """A parallel writer that read before our save overwrites it right after.
 
@@ -970,9 +1000,14 @@ def test_a_duplicate_deleted_past_the_deadline_is_still_recorded() -> None:
     store_for(variables).save(KEY, SentState(KEY, stale_parents=frozenset({loser})))
 
     class SlowDelete(SlackTransport):
-        def delete(self, channel: str, ts: str, *, deadline: float) -> None:
-            super().delete(channel, ts, deadline=deadline)
+        def delete_duplicate(
+            self, channel: str, ts: str, *, deadline: float, still_stale: Callable[[], bool]
+        ) -> bool:
+            deleted = super().delete_duplicate(
+                channel, ts, deadline=deadline, still_stale=still_stale
+            )
             now[0] = 11.0  # the delete used up the 10s budget
+            return deleted
 
     w = writer(api, variables, clock=lambda: now[0], transport=SlowDelete(api, clock=lambda: 0.0))
     w.handle(stage(S, R, P))

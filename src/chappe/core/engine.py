@@ -466,24 +466,37 @@ class Engine:
     def _clear_stale(self, key: str, state: SentState, deadline: float) -> SentState:
         """Delete losing duplicate parents and record each as cleared (contract D2).
 
-        Each delete is recorded right after it is made, without a deadline check (it records a
-        Slack call already made); a delete that would start after the deadline is left to the
-        next event.
+        Each event makes one attempt per duplicate, never a retry: the store is read inside the
+        attempt, right before its single request, and a duplicate that won again meanwhile is kept.
+        A failed attempt leaves the duplicate to the next event; so does a delete that would start
+        after the deadline. Each delete is recorded right after it is made, without a deadline
+        check (it records a Slack call already made).
         """
         for ts in sorted(state.stale_parents, key=slack_ts_key):
-            current = self._load(key, deadline)  # the winner may have changed since `state`
-            if current is not None and current.parent_ref == ts:
-                continue
+            winner: list[str | None] = []
+
+            def still_stale(ts: str = ts, winner: list[str | None] = winner) -> bool:
+                current = self._load(key, deadline)  # the winner may have changed since `state`
+                winner[:] = [None if current is None else current.parent_ref]
+                return winner[0] != ts
+
             try:
-                self._transport.delete(self._settings.channel, ts, deadline=deadline)
+                deleted = self._transport.delete_duplicate(
+                    self._settings.channel, ts, deadline=deadline, still_stale=still_stale
+                )
             except TransportError as exc:
+                seen = winner[0] if winner and winner[0] is not None else "unknown"
                 log.warning(
-                    "chappe: could not delete duplicate parent %s of %s (%s); "
-                    "the next event retries",
+                    "chappe: could not delete duplicate parent %s of %s (%s); the winner is %s; "
+                    "leaving it, the next event tries again",
                     ts,
                     key,
                     exc.code,
+                    seen,
                 )
+                continue
+            if not deleted:
+                log.info("chappe: duplicate parent %s of %s won again; keeping it", ts, key)
                 continue
             self._metric("chappe.duplicate_parent_deleted")
             state = self._record(key, SentState(key, cleared_parents=frozenset({ts})))

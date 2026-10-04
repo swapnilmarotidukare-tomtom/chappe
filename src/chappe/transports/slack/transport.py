@@ -9,6 +9,7 @@ from typing import Any, TypeVar
 
 from chappe.core.errors import TransportError
 from chappe.transports.slack.api import (
+    DEADLINE,
     MESSAGE_NOT_FOUND,
     SlackApi,
     call_with_retry,
@@ -114,3 +115,23 @@ class SlackTransport:
         except TransportError as exc:
             if exc.code != MESSAGE_NOT_FOUND:
                 raise
+
+    def delete_duplicate(
+        self, channel: str, ts: str, *, deadline: float, still_stale: Callable[[], bool]
+    ) -> bool:
+        """Delete a duplicate parent: one request, never retried.
+
+        A retry that waited (a 429's Retry-After) could land after the parent won again and
+        received the final status. `still_stale()` is asked right before the request, so only
+        that one request is left as a window (spec 7.1).
+        """
+        if self._clock() >= deadline:
+            raise TransportError(DEADLINE, retryable=True)
+        if not still_stale():
+            return False
+        try:
+            self._api.delete(channel, ts, timeout=self._left(deadline))
+        except TransportError as exc:
+            if exc.code != MESSAGE_NOT_FOUND:
+                raise
+        return True
