@@ -1,10 +1,43 @@
 # Chappe
 
+<p align="center"><img src="https://commons.wikimedia.org/wiki/Special:FilePath/Telegraphe_Chappe_1.jpg?width=480" alt="A Chappe semaphore telegraph tower: a mast with a crossbar and two movable arms" width="480"></p>
+
+<p align="center"><em>Chappe semaphore tower — <a href="https://commons.wikimedia.org/wiki/File:Telegraphe_Chappe_1.jpg">Wikimedia Commons</a>, public domain</em></p>
+
+## What it does
+
+Chappe reports the progress of Apache Airflow 3 runs to Slack. Each DAG run gets one channel message that is edited in place as milestones start and finish. The step history and the final result go in that message's thread. When a run fails, an alert mentions your on-call. DAG authors mark the tasks that matter with `@milestone`; channel, theme and icons are configuration.
+
+```text
+:hourglass_flowing_sand: *orders 2026.10.1* · In progress · 5h 54m · started 08:05
+:white_check_mark::white_check_mark::white_check_mark:  *Prepare* · Passed
+:hourglass_flowing_sand::white_circle:  *Regression vs baseline 2026.10.0* · ID stability
+Now: ID stability (5m)
+Airflow run
+```
+
+## Why the name
+
+Claude Chappe (1763–1805), a French inventor, built the optical telegraph with his brothers in the 1790s. Towers on hilltops carried a crossbar with two movable arms, and each position of the arms was a signal. An operator read the next tower through a telescope, copied the position, and the message moved from tower to tower. The first line, from Paris to Lille, opened in 1794: news that took days by courier arrived in hours. The network grew to hundreds of stations across France and was used until the electric telegraph replaced it in the mid-19th century. The word "telegraph", from the Greek for "far writer", was first used for Chappe's system. Like a Chappe tower, this library does one job. It relays the state of a run, as one signal that changes in place, to people who are far from the machine room and not watching Airflow.
+
+## Principle
+
 > **Chappe never breaks or blocks a pipeline. It prefers being late over being wrong, and silence over a duplicate.**
 
-Chappe reports the progress of Apache Airflow 3 runs to Slack. Each DAG run gets one channel message that is edited in place as milestones start and finish, with step history in that message's thread. DAG authors mark the tasks that matter with `@milestone`; channel, theme and icons are configuration.
+- A Slack outage never fails a task: Chappe's errors are logged, not raised into Airflow.
+- A delayed update is fine. A wrong status is not.
+- When Chappe cannot tell whether a message landed, it does not post a second one.
 
-**Status:** internal pre-release (0.0.1 in development). Chappe is not published on PyPI, has no public documentation site, and is not licensed for use outside the owning organization.
+## When it helps
+
+- Release or regression pipelines whose title comes from params, such as product and version.
+- Long multi-stage pipelines where people ask "where is it now?".
+- Nightly data loads followed by stakeholders who have no Airflow access.
+- On-call who should be pinged only when a run fails.
+- A team channel that should show one tidy message per run, not a stream of task notifications.
+
+**Status:** Chappe 0.0.1 is an internal release: the wheel is in `releases/` and the tag is `v0.0.1`. It is not published on PyPI, has no public documentation site, and is not licensed for use outside the owning organization.
+
 
 ## Quick start
 
