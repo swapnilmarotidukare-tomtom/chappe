@@ -35,7 +35,11 @@ def test_first_event_posts_the_parent_and_every_entry() -> None:
 
 def test_known_parent_is_edited_only_when_its_text_changed() -> None:
     sent = SentState(
-        "k", parent_ref=PARENT, parent_text="p", watermark=RUNNING, sent_keys=frozenset({"a"})
+        "k",
+        parent_ref=PARENT,
+        parent_text="p",
+        watermark=RUNNING,
+        sent_keys=frozenset({("a", PARENT)}),
     )
     unchanged = plan_sends(messages("p", ("a",)), sent)
     assert not (unchanged.update_parent or unchanged.entries or unchanged.alerts)
@@ -59,7 +63,8 @@ def test_write_rules() -> None:
 
 @given(st.sets(st.text(min_size=1, max_size=5)), st.sets(st.text(min_size=1, max_size=5)))
 def test_plan_never_resends_known_keys(rendered: set[str], known: set[str]) -> None:
-    sent = SentState("k", parent_ref=PARENT, parent_text="p", sent_keys=frozenset(known))
+    sent_keys = frozenset((key, PARENT) for key in known)
+    sent = SentState("k", parent_ref=PARENT, parent_text="p", sent_keys=sent_keys)
     plan = plan_sends(messages("p", tuple(sorted(rendered))), sent)
     assert {e.key for e in plan.entries} == rendered - known
 

@@ -21,7 +21,8 @@ from chappe.core.view import Watermark
 log = logging.getLogger(__name__)
 
 KEY_PREFIX = "chappe__"
-PAYLOAD_VERSION = 1
+PAYLOAD_VERSION = 2
+_V1 = 1  # read for runs in flight during an upgrade; never written
 
 Get = Callable[[str], str | None]
 Set = Callable[[str, str], None]
@@ -75,6 +76,12 @@ def _watermark(data: Any) -> Watermark | None:
     )
 
 
+def _required(wm: Watermark | None) -> Watermark:
+    if wm is None:
+        raise ValueError("a parent watermark is missing")
+    return wm
+
+
 def encode(state: SentState) -> str:
     return json.dumps(
         {
@@ -84,7 +91,8 @@ def encode(state: SentState) -> str:
             "parent_text": state.parent_text,
             "wm": _watermark_json(state.watermark),
             "parent_written": _watermark_json(state.parent_written),
-            "sent_keys": sorted(state.sent_keys),
+            "parent_wms": {ts: _watermark_json(wm) for ts, wm in state.parent_wms.items()},
+            "sent_keys": [list(pair) for pair in sorted(state.sent_keys)],
             "stale_parents": sorted(state.stale_parents),
             "cleared_parents": sorted(state.cleared_parents),
             "degraded": state.degraded,
@@ -94,19 +102,46 @@ def encode(state: SentState) -> str:
     )
 
 
+def _v1_parent_fields(
+    data: dict[str, Any], parent_ref: str | None, watermark: Watermark | None
+) -> tuple[dict[str, Watermark], frozenset[tuple[str, str]]]:
+    """v1 kept plain keys and no per-parent watermarks: both belong to the v1 parent.
+
+    Without a parent (it was deleted), v1's keys are dropped, so they are sent again under the
+    next parent, as v2 does for keys under a deleted parent.
+    """
+    if parent_ref is None:
+        return {}, frozenset()
+    written = {parent_ref: watermark} if watermark is not None else {}
+    return written, frozenset((str(k), parent_ref) for k in data["sent_keys"])
+
+
+def _pair(item: Any) -> tuple[str, str]:
+    key, ts = item  # raises ValueError or TypeError on anything but a pair
+    return str(key), str(ts)
+
+
 def decode(raw: str) -> SentState:
-    """Parse a v1 payload. Raises ValueError, KeyError or TypeError on anything else."""
+    """Parse a v2 (or v1) payload. Raises ValueError, KeyError or TypeError on anything else."""
     data = json.loads(raw)
-    if not isinstance(data, dict) or data.get("v") != PAYLOAD_VERSION:
-        raise ValueError("not a v1 Chappe payload")
+    if not isinstance(data, dict) or data.get("v") not in (PAYLOAD_VERSION, _V1):
+        raise ValueError("not a v1 or v2 Chappe payload")
     parent_ref = data["parent_ref"]
+    parent_ref = None if parent_ref is None else str(parent_ref)
+    watermark = _watermark(data["wm"])
+    if data["v"] == _V1:
+        parent_wms, sent_keys = _v1_parent_fields(data, parent_ref, watermark)
+    else:
+        parent_wms = {str(ts): _required(_watermark(wm)) for ts, wm in data["parent_wms"].items()}
+        sent_keys = frozenset(_pair(item) for item in data["sent_keys"])
     return SentState(
         process_key=str(data["process_key"]),
-        parent_ref=None if parent_ref is None else str(parent_ref),
+        parent_ref=parent_ref,
         parent_text=str(data["parent_text"]),
-        watermark=_watermark(data["wm"]),
+        watermark=watermark,
         parent_written=_watermark(data["parent_written"]),
-        sent_keys=frozenset(str(k) for k in data["sent_keys"]),
+        parent_wms=parent_wms,
+        sent_keys=sent_keys,
         stale_parents=frozenset(str(ts) for ts in data["stale_parents"]),
         cleared_parents=frozenset(str(ts) for ts in data["cleared_parents"]),
         degraded=bool(data["degraded"]),

@@ -45,17 +45,17 @@ def test_slack_ts_key_matches_numeric_order(s1: int, f1: str, s2: int, f2: str) 
 
 
 def test_merge_keeps_both_writers_keys_and_the_newer_watermark() -> None:
-    stored = SentState("k", parent_ref=LOW, watermark=LATER, sent_keys=frozenset({"a"}))
+    stored = SentState("k", parent_ref=LOW, watermark=LATER, sent_keys=frozenset({("a", LOW)}))
     new = SentState(
         "k",
         parent_ref=LOW,
         watermark=RUNNING,
-        sent_keys=frozenset({"b"}),
+        sent_keys=frozenset({("b", LOW)}),
         degraded=True,
         updated_at=T,
     )
     merged = merge_sent(stored, new)
-    assert merged.sent_keys == {"a", "b"}
+    assert merged.live_keys == {"a", "b"}
     assert merged.watermark == LATER
     assert merged.degraded
     assert merged.updated_at == T
@@ -71,6 +71,42 @@ def test_merge_into_nothing_returns_the_new_state() -> None:
         updated_at=T,
     )
     assert merge_sent(None, new) == new
+
+
+def test_the_parent_carrying_the_newest_written_view_wins() -> None:
+    """Review I-1: the lowest ts alone could delete the parent that shows the final status."""
+    final = SentState("k", parent_ref=HIGH, parent_wms={HIGH: FINAL})
+    older = SentState("k", parent_ref=LOW, parent_wms={LOW: RUNNING})
+    for merged in (merge_sent(final, older), merge_sent(older, final)):
+        assert merged.parent_ref == HIGH
+        assert merged.stale_parents == {LOW}
+        assert merged.parent_wms == {HIGH: FINAL, LOW: RUNNING}
+    # every write to a parent raises its watermark; the best one per parent is kept
+    raised = merge_sent(merge_sent(older, final), SentState("k", parent_wms={LOW: LATER}))
+    assert raised.parent_wms[LOW] == LATER and raised.parent_ref == HIGH
+
+
+def test_equal_watermarks_go_to_the_lowest_ts() -> None:
+    a = SentState("k", parent_ref=HIGH, parent_wms={HIGH: RUNNING})
+    b = SentState("k", parent_ref=LOW, parent_wms={LOW: RUNNING})
+    assert merge_sent(a, b).parent_ref == merge_sent(b, a).parent_ref == LOW
+    # a parent with a recorded watermark beats one without (a stale ts known only by name)
+    unknown = SentState("k", stale_parents=frozenset({LOW}))
+    assert merge_sent(unknown, a).parent_ref == HIGH
+
+
+def test_keys_sent_under_a_deleted_parent_count_as_not_sent() -> None:
+    stored = SentState(
+        "k",
+        parent_ref=LOW,
+        stale_parents=frozenset({HIGH}),
+        sent_keys=frozenset({("a", LOW), ("b", HIGH), ("c", "1791050263.000001")}),
+        cleared_parents=frozenset({"1791050263.000001"}),
+    )
+    assert stored.live_keys == {"a", "b"}  # b's parent is still in Slack until it is deleted
+    merged = merge_sent(stored, SentState("k", cleared_parents=frozenset({HIGH})))
+    assert merged.live_keys == {"a"}
+    assert ("b", HIGH) in merged.sent_keys  # kept: a cleared parent never comes back
 
 
 def test_lowest_ts_wins_and_the_other_parent_becomes_stale() -> None:
@@ -158,13 +194,14 @@ TS = st.sampled_from(
         "1791050264.000000",
     ]
 )
-WATERMARKS = st.none() | st.builds(
+WATERMARK = st.builds(
     Watermark,
     st.booleans(),
     st.integers(0, 3),
     st.integers(0, 3),
     st.none() | st.sampled_from([T, T + timedelta(minutes=1)]),
 )
+WATERMARKS = st.none() | WATERMARK
 STATES = st.builds(
     SentState,
     process_key=st.just("k"),
@@ -172,7 +209,8 @@ STATES = st.builds(
     parent_text=st.sampled_from(["", "a", "b"]),
     watermark=WATERMARKS,
     parent_written=WATERMARKS,
-    sent_keys=st.frozensets(st.sampled_from(["a", "b", "c", "d"])),
+    parent_wms=st.dictionaries(TS, WATERMARK, max_size=3),
+    sent_keys=st.frozensets(st.tuples(st.sampled_from(["a", "b", "c", "d"]), TS)),
     stale_parents=st.frozensets(TS, max_size=3),
     cleared_parents=st.frozensets(TS, max_size=2),
     degraded=st.booleans(),
@@ -190,6 +228,9 @@ def same_order(a: Watermark | None, b: Watermark | None) -> bool:
 def test_merge_is_commutative_on_the_merged_fields(a: SentState, b: SentState) -> None:
     ab, ba = merge_sent(a, b), merge_sent(b, a)
     assert ab.sent_keys == ba.sent_keys == a.sent_keys | b.sent_keys
+    assert ab.live_keys == ba.live_keys
+    assert ab.parent_wms.keys() == ba.parent_wms.keys()
+    assert all(same_order(ab.parent_wms[ts], ba.parent_wms[ts]) for ts in ab.parent_wms)
     assert ab.parent_ref == ba.parent_ref
     assert ab.stale_parents == ba.stale_parents
     assert ab.cleared_parents == ba.cleared_parents
@@ -212,12 +253,25 @@ def test_merging_a_history_keeps_every_invariant(history: list[SentState]) -> No
     assert acc is not None
 
     cleared = frozenset().union(*(s.cleared_parents for s in history))
-    # parent_ref is the lowest ref ever merged that is not cleared (a deleted parent never wins);
-    # a ref merged as stale is still a parent in Slack, so it counts
+    # parent_ref is the live parent carrying the newest written view, ties to the lowest ts
+    # (a deleted parent never wins); a ref merged as stale is still a parent in Slack, so it counts
     refs = {s.parent_ref for s in history if s.parent_ref is not None}
     refs |= frozenset().union(*(s.stale_parents for s in history))
     live = refs - cleared
-    assert acc.parent_ref == (min(live, key=slack_ts_key) if live else None)
+    best: dict[str, Watermark] = {}
+    for s in history:
+        for ts, wm in s.parent_wms.items():
+            if wm.newer_than(best.get(ts)):
+                best[ts] = wm
+    assert acc.parent_wms.keys() == best.keys()
+    assert all(same_order(acc.parent_wms[ts], wm) for ts, wm in best.items())
+
+    def rank(ts: str) -> tuple[bool, tuple[object, ...], tuple[int, int]]:
+        wm = best.get(ts)
+        seconds, micros = slack_ts_key(ts)
+        return (wm is not None, wm.order_key() if wm else (), (-seconds, -micros))
+
+    assert acc.parent_ref == (max(live, key=rank) if live else None)
 
     assert acc.cleared_parents == cleared
     assert not acc.stale_parents & cleared  # a cleared ts is never stale again
@@ -225,5 +279,7 @@ def test_merging_a_history_keeps_every_invariant(history: list[SentState]) -> No
     assert acc.stale_parents == live - {acc.parent_ref}
 
     assert acc.sent_keys == frozenset().union(*(s.sent_keys for s in history))
+    # a key counts as sent only under a parent that was not deleted; cleared is never undone
+    assert acc.live_keys == {k for k, ts in acc.sent_keys if ts not in cleared}
     if any(s.watermark is not None and s.watermark.finished for s in history):
         assert acc.watermark is not None and acc.watermark.finished  # finished is never lost

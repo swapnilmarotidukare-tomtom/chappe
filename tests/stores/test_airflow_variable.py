@@ -49,7 +49,8 @@ def test_save_then_load_round_trips() -> None:
         parent_text="parent",
         watermark=RUNNING,
         parent_written=RUNNING,
-        sent_keys=frozenset({"step:b", "step:a"}),
+        parent_wms={LOW: RUNNING},
+        sent_keys=frozenset({("step:b", LOW), ("step:a", LOW)}),
         stale_parents=frozenset({HIGH}),
         cleared_parents=frozenset({"1790000000.000001"}),
         degraded=True,
@@ -60,9 +61,10 @@ def test_save_then_load_round_trips() -> None:
 
     assert key_for(PK) == variable_key("orders", "manual__2026-10-02T13:35:00+00:00")
     payload = json.loads(variables.data[key_for(PK)])
-    assert payload["v"] == 1
+    assert payload["v"] == 2
     assert payload["process_key"] == PK
-    assert payload["sent_keys"] == ["step:a", "step:b"]
+    assert payload["sent_keys"] == [["step:a", LOW], ["step:b", LOW]]
+    assert payload["parent_wms"] == {LOW: payload["wm"]}
     assert payload["wm"] == {
         "finished": False,
         "settled": 1,
@@ -121,12 +123,12 @@ def test_parallel_writers_keep_each_others_keys() -> None:
         seen_by_a.append(a.load(PK))
 
     variables.before_set = a_reads_before_b_writes
-    b.save(PK, SentState(PK, parent_ref=LOW, watermark=FINAL, sent_keys=frozenset({"b"})))
+    b.save(PK, SentState(PK, parent_ref=LOW, watermark=FINAL, sent_keys=frozenset({("b", LOW)})))
     assert seen_by_a == [None]  # A read between B's re-read and B's write: it saw nothing
 
-    mine = SentState(PK, parent_ref=LOW, watermark=RUNNING, sent_keys=frozenset({"a"}))
+    mine = SentState(PK, parent_ref=LOW, watermark=RUNNING, sent_keys=frozenset({("a", LOW)}))
     merged = a.save(PK, mine)
-    assert merged.sent_keys == {"a", "b"}
+    assert merged.live_keys == {"a", "b"}
     assert merged.watermark == FINAL  # finished stays
     assert store_on(variables).load(PK) == merged
 
@@ -203,3 +205,52 @@ def test_times_without_an_offset_are_read_as_utc() -> None:
     assert loaded.updated_at == NOW
     assert loaded.watermark is not None and loaded.watermark.occurred_at is not None
     assert loaded.watermark.occurred_at.tzinfo is not None
+
+
+V1_PAYLOAD = {
+    "v": 1,
+    "process_key": PK,
+    "parent_ref": LOW,
+    "parent_text": "parent",
+    "wm": {
+        "finished": False,
+        "settled": 1,
+        "started": 2,
+        "occurred_at": "2026-10-02T09:00:00+00:00",
+    },
+    "parent_written": None,
+    "sent_keys": ["step:a", "step:b"],
+    "stale_parents": [HIGH],
+    "cleared_parents": [],
+    "degraded": False,
+    "updated_at": "2026-10-03T12:00:00+00:00",
+}
+
+
+def test_a_v1_variable_is_read_and_written_back_as_v2() -> None:
+    """Runs in flight during an upgrade keep their parent and their sent keys."""
+    variables = FakeVariables()
+    variables.data[key_for(PK)] = json.dumps(V1_PAYLOAD)
+    store = store_on(variables)
+    state = store.load(PK)
+    assert state is not None
+    assert state.sent_keys == {("step:a", LOW), ("step:b", LOW)}
+    assert state.live_keys == {"step:a", "step:b"}
+    assert state.parent_wms == {LOW: RUNNING}
+    assert (state.parent_ref, state.stale_parents) == (LOW, {HIGH})
+
+    store.save(PK, SentState(PK, sent_keys=frozenset({("step:c", LOW)})))
+    payload = json.loads(variables.data[key_for(PK)])
+    assert payload["v"] == 2
+    assert payload["sent_keys"] == [["step:a", LOW], ["step:b", LOW], ["step:c", LOW]]
+
+
+def test_a_v1_variable_without_a_parent_keeps_no_keys() -> None:
+    """v1 kept keys whose parent was deleted; v2 sends them again under the new parent."""
+    variables = FakeVariables()
+    variables.data[key_for(PK)] = json.dumps(
+        {**V1_PAYLOAD, "parent_ref": None, "stale_parents": []}
+    )
+    state = store_on(variables).load(PK)
+    assert state is not None
+    assert (state.parent_ref, state.sent_keys, state.parent_wms) == (None, frozenset(), {})

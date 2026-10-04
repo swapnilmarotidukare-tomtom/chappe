@@ -82,7 +82,7 @@ def first_events(draw: st.DrawFn) -> tuple[list[ProcessView], dict[int, tuple[in
 
 @settings(max_examples=300, deadline=None)
 @given(first_events())
-def test_concurrent_first_events_converge_on_the_lowest_parent(
+def test_concurrent_first_events_converge_on_one_parent(
     case: tuple[list[ProcessView], dict[int, tuple[int, int]]],
 ) -> None:
     """Parallel writers start inside each other's load→set window, at Slack posts and Variable
@@ -119,11 +119,18 @@ def test_concurrent_first_events_converge_on_the_lowest_parent(
     deleted = [ts for _, ts in api.deleted]
     (live,) = api.top_level(CHANNEL)  # exactly one live parent
     assert len(deleted) == posted - 1  # every other parent was deleted
-    assert live.ts == min([live.ts, *deleted], key=slack_ts_key)  # the lowest ts won
     saved = shared.load(KEY)
     assert saved is not None
     assert saved.parent_ref == live.ts
     assert saved.stale_parents <= set(deleted)  # anything still listed is already gone
+
+    def rank(ts: str) -> tuple[bool, tuple[object, ...], tuple[int, int]]:
+        wm = saved.parent_wms.get(ts)
+        seconds, micros = slack_ts_key(ts)
+        return (wm is not None, wm.order_key() if wm else (), (-seconds, -micros))
+
+    # the winner carries the newest written view; equal views went to the lowest ts
+    assert all(rank(live.ts) > rank(ts) for ts in deleted)
 
 
 @settings(max_examples=200, deadline=None)

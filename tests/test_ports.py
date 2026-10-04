@@ -96,9 +96,11 @@ class NoMilestones:
 def test_store_save_returns_the_merged_state() -> None:
     store: Store = DictStore()
     assert store.load("orders/r1") is None
-    store.save("orders/r1", SentState("orders/r1", sent_keys=frozenset({"a"})))
-    merged = store.save("orders/r1", SentState("orders/r1", sent_keys=frozenset({"b"})))
-    assert merged.sent_keys == frozenset({"a", "b"})
+    store.save("orders/r1", SentState("orders/r1", sent_keys=frozenset({("a", "1.000001")})))
+    merged = store.save(
+        "orders/r1", SentState("orders/r1", sent_keys=frozenset({("b", "1.000001")}))
+    )
+    assert merged.live_keys == frozenset({"a", "b"})
     assert store.load("orders/r1") == merged
 
 

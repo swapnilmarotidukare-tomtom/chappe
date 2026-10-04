@@ -12,16 +12,25 @@ import pytest
 from chappe.core.engine import HandleResult, parent_payload
 from chappe.core.errors import TransportError
 from chappe.core.events import ChappeEvent, EventKind
-from chappe.core.messages import MessageSet, ThreadEntry
+from chappe.core.messages import MessageSet
 from chappe.core.model import ProcessState, StepState
 from chappe.core.reconcile import SentState
 from chappe.core.render import RenderContext
 from chappe.core.view import ProcessView
 from chappe.stores.airflow_variable import encode, key_for
-from chappe.themes.builtin.plain import PlainTheme
 from chappe.themes.builtin.thread import ThreadTheme
 from chappe.transports.slack.transport import EVENT_TYPE, SlackTransport
-from tests.support.engine import CHANNEL, CTX, KEY, PreparedSource, render, stage, store_for, writer
+from tests.support.engine import (
+    CHANNEL,
+    CTX,
+    KEY,
+    PreparedSource,
+    StepEntriesTheme,
+    render,
+    stage,
+    store_for,
+    writer,
+)
 from tests.support.fakes import FakeSlackApi, FakeVariables
 from tests.support.samples import ProcessViewBuilder, default_context
 
@@ -33,21 +42,6 @@ class BrokenTheme:
 
     def render(self, view: ProcessView, ctx: RenderContext) -> MessageSet:
         raise RuntimeError("theme bug")
-
-
-class StepEntriesTheme:
-    """Plain, plus one thread entry per finished step with its own end time (thread-entry rule)."""
-
-    name: ClassVar[str] = "plain_with_steps"
-
-    def render(self, view: ProcessView, ctx: RenderContext) -> MessageSet:
-        base = PlainTheme().render(view, ctx)
-        steps = tuple(
-            ThreadEntry(f"step:{step.key}", f"{ctx.icon(step.state)} {ctx.text(step.title)}")
-            for step in view.steps
-            if step.state.finished and step.ended_at is not None
-        )
-        return replace(base, thread=steps + base.thread)
 
 
 class ExplodingSource(PreparedSource):
@@ -83,7 +77,7 @@ def test_happy_path_posts_once_edits_and_finishes() -> None:
     assert saved.parent_text == expected.parent.text
     assert saved.parent_written == final.watermark
     assert saved.watermark == final.watermark
-    assert saved.sent_keys == {e.key for e in expected.thread}
+    assert saved.live_keys == {e.key for e in expected.thread}
 
 
 def test_a_view_that_is_not_newer_is_skipped() -> None:
@@ -164,7 +158,7 @@ def test_parallel_writers_both_keep_their_thread_entries() -> None:
 
     expected = {e.key for v in (transform_done, load_done) for e in theme.render(v, CTX).thread}
     saved = store_for(variables).load(KEY)
-    assert saved is not None and expected <= saved.sent_keys
+    assert saved is not None and expected <= saved.live_keys
 
     writer(api, variables, theme=theme).handle(stage(S, S, S, S))
     (parent,) = api.top_level(CHANNEL)
@@ -194,7 +188,16 @@ def test_a_parent_dropped_by_a_stale_write_is_saved_again() -> None:
     """
     api, variables = FakeSlackApi(), FakeVariables()
     parallel = api.post(CHANNEL, "parallel parent")  # posted first, so its ts is lower
-    stale_write = encode(SentState(KEY, parent_ref=parallel, parent_text="parallel parent"))
+    view = stage(R, P, P)
+    # a parallel first event of the same progress: equal watermarks, so the lower ts wins
+    stale_write = encode(
+        SentState(
+            KEY,
+            parent_ref=parallel,
+            parent_text="parallel parent",
+            parent_wms={parallel: view.watermark},
+        )
+    )
     writes: list[str] = []
 
     def count_write(key: str, value: str) -> None:
@@ -206,7 +209,6 @@ def test_a_parent_dropped_by_a_stale_write_is_saved_again() -> None:
             variables.set(key_for(KEY), stale_write)
 
     variables.before_set = count_write
-    view = stage(R, P, P)
     assert (
         writer(api, variables, before_read=overwrite_after_our_first_save).handle(view)
         is HandleResult.SENT
@@ -461,7 +463,7 @@ def test_replies_stop_at_the_deadline_and_the_next_event_sends_the_rest() -> Non
     (parent,) = api.top_level(CHANNEL)
     assert len(api.replies(CHANNEL, parent.ts)) == 1
     saved = store_for(variables).load(KEY)
-    assert saved is not None and len(saved.sent_keys) == 1  # what was sent is saved
+    assert saved is not None and len(saved.live_keys) == 1  # what was sent is saved
 
     api.before_post = None
     now[0] = 100.0
@@ -562,7 +564,7 @@ def test_thread_race_a_step_shown_finished_by_a_parallel_callback_waits_for_its_
     assert thread_replies(api, "Transform") == []
     assert len(thread_replies(api, "Load")) == 1
     saved = store_for(variables).load(KEY)
-    assert saved is not None and transform_key not in saved.sent_keys
+    assert saved is not None and transform_key not in saved.live_keys
 
     own = parallel_run(transform_timed=True, load_timed=False, later=1)
     assert writer(api, variables, theme=theme, context=THREAD_CTX).handle(own) is (
@@ -571,7 +573,7 @@ def test_thread_race_a_step_shown_finished_by_a_parallel_callback_waits_for_its_
     (reply,) = thread_replies(api, "Transform")
     assert "4h 21m" in reply
     saved = store_for(variables).load(KEY)
-    assert saved is not None and transform_key in saved.sent_keys
+    assert saved is not None and transform_key in saved.live_keys
 
     final = parallel_run(transform_timed=False, load_timed=False, finished=True)
     writer(api, variables, theme=theme, context=THREAD_CTX).handle(final, EventKind.RUN_FINISHED)
@@ -598,7 +600,7 @@ def test_thread_race_fallback_a_lost_own_callback_is_covered_by_the_final_event(
     assert "4h 21m" not in reply
     assert len(thread_replies(api, "Load")) == 1
     saved = store_for(variables).load(KEY)
-    assert saved is not None and "step:main.transform:succeeded" in saved.sent_keys
+    assert saved is not None and "step:main.transform:succeeded" in saved.live_keys
 
 
 def test_thread_race_an_own_callback_older_than_the_parallel_event_still_sends_its_reply() -> None:
@@ -625,7 +627,7 @@ def test_thread_race_an_own_callback_older_than_the_parallel_event_still_sends_i
     assert parent.text == theme.render(load_first, THREAD_CTX).parent.text
     assert not [c for c in api.calls if c[0] == "update"]  # the older view never edits the parent
     after = store_for(variables).load(KEY)
-    assert after is not None and "step:main.transform:succeeded" in after.sent_keys
+    assert after is not None and "step:main.transform:succeeded" in after.live_keys
     assert (after.parent_text, after.parent_written, after.watermark) == (
         before.parent_text,
         before.parent_written,

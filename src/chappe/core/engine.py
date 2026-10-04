@@ -306,7 +306,7 @@ class Engine:
             current = self._load(key, deadline)  # a parallel event may have sent it meanwhile
             if current is not None:
                 state = current
-            if reply_key in state.sent_keys:
+            if reply_key in state.live_keys:
                 continue
             parent = state.parent_ref
             if parent is None:
@@ -315,20 +315,28 @@ class Engine:
                 self._settings.channel, parent, reply, broadcast=broadcast, deadline=deadline
             )
             state = self._record(
-                key, SentState(key, watermark=wm, sent_keys=frozenset({reply_key}))
+                key, SentState(key, watermark=wm, sent_keys=frozenset({(reply_key, parent)}))
             )
             saved = True
         return saved, True
 
     def _post_parent(self, key: str, text: str, wm: Watermark, deadline: float) -> SentState | None:
-        """Post a parent. If parallel events posted too, the lowest Slack ts wins (contract D2).
+        """Post a parent. If parallel events posted too, the parent carrying the newest written view
+        wins, ties to the lowest Slack ts (contract D2).
 
         Returns None when a newer render owns the parent (YIELDED).
         """
         mine = self._transport.post_parent(
             self._settings.channel, text, parent_payload(key, wm), deadline=deadline
         )
-        claim = SentState(key, parent_ref=mine, parent_text=text, watermark=wm, parent_written=wm)
+        claim = SentState(
+            key,
+            parent_ref=mine,
+            parent_text=text,
+            watermark=wm,
+            parent_written=wm,
+            parent_wms={mine: wm},
+        )
         state = self._record(key, claim)
         # verify: without compare-and-set, a parallel stale write can drop `mine`
         for _ in range(2):
@@ -340,7 +348,7 @@ class Engine:
             }:
                 state = loaded
                 break
-            # the merge re-adds `mine`; the lowest ts still wins
+            # the merge re-adds `mine`; the winner rule (D2) still decides
             state = self._record(key, claim)
         state = self._clear_stale(key, state, deadline)  # deletes `mine` when another parent won
         winner = state.parent_ref
@@ -395,7 +403,15 @@ class Engine:
             log.info("chappe: a newer render of %s was stored; not editing the parent", key)
             return None
         return self._record(
-            key, SentState(key, parent_ref=ts, parent_text=text, watermark=wm, parent_written=wm)
+            key,
+            SentState(
+                key,
+                parent_ref=ts,
+                parent_text=text,
+                watermark=wm,
+                parent_written=wm,
+                parent_wms={ts: wm},
+            ),
         )
 
     def _clear_stale(self, key: str, state: SentState, deadline: float) -> SentState:

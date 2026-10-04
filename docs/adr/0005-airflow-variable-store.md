@@ -15,7 +15,7 @@ The spike (`docs/spike/0.0.1-findings.md`, S7) showed that `airflow.sdk.Variable
 - Task 13 implements `AirflowVariableStore` behind the existing `Store` port. It keeps one Variable per run, keyed `chappe/<dag_id>/<run_id>`, holding the existing flat payload plus the parent `ts`: `{"v", "process_key", "parent_ts", "wm_finished", "wm_last_change", "wm_settled", "sent_keys", "degraded"}`.
 - Chappe still attaches the same payload as Slack message metadata on every post and update. It costs nothing, and it keeps a later Slack metadata store possible without migrating anything.
 - The Slack app needs `chat:write` only.
-- Parallel first events: after posting a new parent, Chappe writes the Variable and reads it back. If the Variable then names a different `parent_ts`, Chappe deletes its own parent; the spike confirmed a bot can delete its own message. This narrows the duplicate-parent window but does not close it, because Variables have no compare-and-set.
+- Parallel first events: after posting a new parent, Chappe merges it into the Variable with the watermark it wrote and reads it back. The parent carrying the newest written view wins; ties go to the lowest Slack ts (spec 7.1 rule 4). Every losing parent is deleted, by this event or a later one; the spike confirmed a bot can delete its own message. Replies are recorded with the parent they went under, so replies under a deleted parent are sent again under the winner. This heals duplicates but does not prevent them, because Variables have no compare-and-set.
 
 ## Consequences
 

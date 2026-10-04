@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from typing import ClassVar
 
 from chappe.core.engine import Engine, EngineSettings, HandleResult
 from chappe.core.events import ChappeEvent, EventKind
-from chappe.core.messages import MessageSet
+from chappe.core.messages import MessageSet, ThreadEntry
 from chappe.core.model import ProcessState, StepState
 from chappe.core.render import RenderContext
 from chappe.core.view import ProcessView
@@ -39,6 +40,21 @@ def stage(*states: StepState, finished: ProcessState | None = None) -> ProcessVi
 
 def render(view: ProcessView) -> MessageSet:
     return PlainTheme().render(view, CTX)
+
+
+class StepEntriesTheme:
+    """Plain, plus one thread entry per finished step with its own end time (thread-entry rule)."""
+
+    name: ClassVar[str] = "plain_with_steps"
+
+    def render(self, view: ProcessView, ctx: RenderContext) -> MessageSet:
+        base = PlainTheme().render(view, ctx)
+        steps = tuple(
+            ThreadEntry(f"step:{step.key}", f"{ctx.icon(step.state)} {ctx.text(step.title)}")
+            for step in view.steps
+            if step.state.finished and step.ended_at is not None
+        )
+        return replace(base, thread=steps + base.thread)
 
 
 class PreparedSource:

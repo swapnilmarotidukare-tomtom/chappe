@@ -79,11 +79,12 @@ class Watermark:
         if self.occurred_at is not None and self.occurred_at.tzinfo is None:
             object.__setattr__(self, "occurred_at", self.occurred_at.replace(tzinfo=timezone.utc))
 
-    def _order(self) -> tuple[bool, int, int, datetime]:
+    def order_key(self) -> tuple[bool, int, int, datetime]:
+        """Sorts like the watermarks: a larger key is newer."""
         return (self.finished, self.settled_steps, self.started_steps, self.occurred_at or _EPOCH)
 
     def newer_than(self, other: Watermark | None) -> bool:
-        return other is None or self._order() > other._order()
+        return other is None or self.order_key() > other.order_key()
 
 
 @dataclass(frozen=True, slots=True)

@@ -4,20 +4,30 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from chappe.core.engine import HandleResult
 from chappe.core.events import EventKind
 from chappe.core.model import ProcessState, StepState
+from chappe.core.reconcile import SentState
 from chappe.core.view import ProcessView
 from chappe.themes.builtin.thread import ThreadTheme
 from chappe.transports.slack.transport import SlackTransport
-from tests.support.engine import CHANNEL, KEY, Writer, stage, store_for, writer
+from tests.support.engine import (
+    CHANNEL,
+    KEY,
+    StepEntriesTheme,
+    Writer,
+    render,
+    stage,
+    store_for,
+    writer,
+)
 from tests.support.fakes import FakeSlackApi, FakeVariables
 from tests.support.samples import ProcessViewBuilder, default_context
 
-S, P, R = StepState.SUCCEEDED, StepState.PENDING, StepState.RUNNING
+S, P, R, F = StepState.SUCCEEDED, StepState.PENDING, StepState.RUNNING, StepState.FAILED
 THREAD_CTX = default_context("thread")
 WAIT_S = 5.0  # a generous bound: the threads below only ever wait for each other
 
@@ -114,7 +124,7 @@ def test_a_reply_sent_by_a_parallel_event_meanwhile_is_not_sent_again() -> None:
 
     def parallel_event_after_our_first_reply() -> None:
         stored = shared.load(KEY)
-        if ran or stored is None or not any("extract" in k for k in stored.sent_keys):
+        if ran or stored is None or not any("extract" in k for k in stored.live_keys):
             return
         ran.append(c.handle(stage(S, S, S)))  # sends Transform and Load
 
@@ -126,3 +136,84 @@ def test_a_reply_sent_by_a_parallel_event_meanwhile_is_not_sent_again() -> None:
     texts = [m.text for m in api.replies(CHANNEL, parent.ts)]
     for title in ("Extract", "Transform", "Load"):
         assert sum(f"*{title}*" in text for text in texts) == 1, texts
+
+
+class SlowClaim(SlackTransport):
+    """Runs `meanwhile` once, right after its first parent post and before the claim is saved."""
+
+    def __init__(self, api: FakeSlackApi, meanwhile: Callable[[], None]) -> None:
+        super().__init__(api, clock=lambda: 0.0)
+        self._meanwhile: Callable[[], None] | None = meanwhile
+
+    def post_parent(
+        self, channel: str, text: str, metadata: Mapping[str, Any] | None, *, deadline: float
+    ) -> str:
+        ts = super().post_parent(channel, text, metadata, deadline=deadline)
+        if self._meanwhile is not None:
+            meanwhile, self._meanwhile = self._meanwhile, None
+            meanwhile()
+        return ts
+
+
+def test_a_slow_older_claim_does_not_replace_the_final_parent() -> None:
+    """Review I-1: an older event A posts the first parent (lowest ts) but saves it late. The
+    final event B runs entirely in between: it posts its own parent, the result, the alert, and
+    reads back. When A saves, the parent carrying B's newer view must win; under "lowest ts
+    wins" B's parent was deleted with its replies and A's "In progress" stayed forever."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    b = writer(api, variables)
+    final = stage(S, F, finished=ProcessState.FAILED)
+    results: list[HandleResult] = []
+    a = writer(
+        api,
+        variables,
+        transport=SlowClaim(api, lambda: results.append(b.handle(final, EventKind.RUN_FINISHED))),
+    )
+    assert a.handle(stage(R, P)) is HandleResult.YIELDED
+    assert results == [HandleResult.SENT]
+
+    expected = render(final)
+    (parent,) = api.top_level(CHANNEL)  # A deleted its own, losing parent
+    assert parent.text == expected.parent.text
+    assert [m.text for m in api.replies(CHANNEL, parent.ts)] == [
+        *(e.text for e in expected.thread),
+        *(a.text for a in expected.alerts),
+    ]  # B's result and alert stay on the surviving parent: nothing needs re-sending
+    orphans = {m.thread_ts for m in api._messages[CHANNEL].values() if m.thread_ts}
+    assert orphans == {parent.ts}  # no reply sits under a deleted parent
+    saved = store_for(variables).load(KEY)
+    assert saved is not None and saved.parent_ref == parent.ts
+    assert saved.watermark == final.watermark
+
+
+def test_replies_under_a_parent_that_lost_and_was_deleted_are_sent_again() -> None:
+    """A duplicate parent posted by a parallel event carries a newer view, so it wins and the
+    first parent is deleted. Its replies went with it; the next event sends them again under
+    the surviving parent."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    theme = StepEntriesTheme()
+    writer(api, variables, theme=theme).handle(stage(S, R, P))  # parent P1 with Extract's reply
+    (first,) = api.top_level(CHANNEL)
+    assert len(api.replies(CHANNEL, first.ts)) == 1
+
+    newer = stage(S, S, R)  # a parallel first event that never saw P1 posts P2
+    second = api.post(CHANNEL, render(newer).parent.text)
+    wm = newer.watermark
+    store_for(variables).save(
+        KEY,
+        SentState(
+            KEY,
+            parent_ref=second,
+            parent_text=render(newer).parent.text,
+            watermark=wm,
+            parent_written=wm,
+            parent_wms={second: wm},
+        ),
+    )
+
+    assert writer(api, variables, theme=theme).handle(stage(S, S, S)) is HandleResult.SENT
+    (parent,) = api.top_level(CHANNEL)
+    assert parent.ts == second
+    texts = [m.text for m in api.replies(CHANNEL, second)]
+    for title in ("Extract", "Transform", "Load"):
+        assert sum(f" {title}" in text for text in texts) == 1, texts
