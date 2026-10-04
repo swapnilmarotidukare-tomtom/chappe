@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-airflow = ["apache-airflow>=3.2"]
+airflow = ["apache-airflow>=3.2,<3.3"]  # ADR-0004: pin and test each supported minor
 
 [project.scripts]
 chappe = "chappe.cli:main"
