@@ -3,8 +3,6 @@
 :white_check_mark::white_check_mark::white_check_mark:  *Prepare* · Passed
 :white_check_mark::x:  *Regression vs baseline 2026.10.0* · Failed: Regression
 <https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
-=== fallback ===
-orders 2026.10.1: Failed (5/5)
 === thread ===
 [step:prepare.parquet_delta:succeeded] :white_check_mark: *Parquet → Delta* (Prepare) · Passed · <https://airflow.invalid/dags/orders/runs/run_1/tasks/parquet_delta|Log>
 [step:prepare.geometry:succeeded] :white_check_mark: *Geometry* (Prepare) · Passed · <https://airflow.invalid/dags/orders/runs/run_1/tasks/geometry|Log>

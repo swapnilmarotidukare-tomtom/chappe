@@ -4,7 +4,5 @@
 :hourglass_flowing_sand::white_circle:  *Regression vs baseline 2026.10.0* · ID stability
 Now: ID stability (5m)
 <https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
-=== fallback ===
-orders 2026.10.1: In progress (3/5)
 === thread ===
 === alerts ===

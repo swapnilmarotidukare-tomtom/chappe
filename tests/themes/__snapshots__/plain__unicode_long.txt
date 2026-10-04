@@ -1,6 +1,4 @@
 === parent ===
 *Ünïcødé &lt;orders&gt; &amp; co* · :hourglass_flowing_sand: In progress · 0/1 steps · <https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
-=== fallback ===
-Ünïcødé <orders> & co: In progress (0/1)
 === thread ===
 === alerts ===

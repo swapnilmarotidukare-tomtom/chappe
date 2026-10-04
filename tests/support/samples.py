@@ -239,7 +239,6 @@ def default_context(
 
 def dump_message_set(messages: MessageSet) -> str:
     lines = ["=== parent ===", messages.parent.text]
-    lines += ["=== fallback ===", messages.parent.fallback_text]
     lines.append("=== thread ===")
     lines += [f"[{e.key}]{' (broadcast)' if e.broadcast else ''} {e.text}" for e in messages.thread]
     lines.append("=== alerts ===")

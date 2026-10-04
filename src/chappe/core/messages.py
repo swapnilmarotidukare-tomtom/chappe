@@ -9,7 +9,6 @@ from dataclasses import dataclass
 @dataclass(frozen=True, slots=True)
 class ParentMessage:
     text: str
-    fallback_text: str
 
 
 @dataclass(frozen=True, slots=True)

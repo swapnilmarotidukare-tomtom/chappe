@@ -77,7 +77,6 @@ class ThemeConformance:
     def test_messages_stay_within_limits(self, sample: str) -> None:
         limits = self.context().limits
         messages = self.render(sample)
-        assert messages.parent.fallback_text.strip()
         assert len(messages.parent.text) <= limits.parent_chars
         for item in (*messages.thread, *messages.alerts):
             assert len(item.text) <= limits.entry_chars

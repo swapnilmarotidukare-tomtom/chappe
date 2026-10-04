@@ -1,7 +1,5 @@
 === parent ===
 *orders 2026.10.1* · :x: Failed · 4 passed · 1 failed · <https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
-=== fallback ===
-orders 2026.10.1: Failed (5/5)
 === thread ===
 [process:failed] (broadcast) :x: Failed · *orders 2026.10.1* · 10h 24m
 === alerts ===

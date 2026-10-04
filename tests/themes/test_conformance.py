@@ -39,7 +39,7 @@ class BrokenTheme:
         text = f"{ctx.label(view.state)} {headers} {random.random()}"
         finished = [step for step in view.steps if step.state.finished]
         entries = tuple(ThreadEntry(f"step:{step.key}", step.title) for step in finished)
-        return MessageSet(ParentMessage(text, text), entries)
+        return MessageSet(ParentMessage(text), entries)
 
 
 class BrokenConformance(ThemeConformance):  # no "Test" prefix: pytest does not collect it

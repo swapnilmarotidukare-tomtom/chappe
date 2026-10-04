@@ -2,8 +2,6 @@
 :white_check_mark: *orders 2026.10.1* · Passed
 :white_check_mark::white_check_mark:  2/2 steps
 <https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
-=== fallback ===
-orders 2026.10.1: Passed (2/2)
 === thread ===
 [step:main.parquet_delta:succeeded] :white_check_mark: *Parquet → Delta* · Passed · <https://airflow.invalid/dags/orders/runs/run_1/tasks/parquet_delta|Log>
 [step:main.geometry:succeeded] :white_check_mark: *Geometry* · Passed · <https://airflow.invalid/dags/orders/runs/run_1/tasks/geometry|Log>

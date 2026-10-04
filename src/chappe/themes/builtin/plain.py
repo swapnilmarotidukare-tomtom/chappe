@@ -26,9 +26,8 @@ class PlainTheme:
         parent = f"{ctx.fmt.bold(view.title)} · {status} · {progress}"
         if view.links:
             parent += " · " + " · ".join(ctx.fmt.link(link.url, link.label) for link in view.links)
-        fallback = f"{view.title}: {ctx.label(view.state)} ({done}/{total})"
         return MessageSet(
-            ParentMessage(clip(parent, ctx.limits.parent_chars), fallback),
+            ParentMessage(clip(parent, ctx.limits.parent_chars)),
             self._result(view, ctx),
             self._alerts(view, ctx),
         )

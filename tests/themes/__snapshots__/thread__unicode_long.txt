@@ -3,7 +3,5 @@
 :hourglass_flowing_sand:  0/1 steps
 Now: Generate &amp; consolidate &lt;aggregates&gt; für Ünïcødé xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (5m)
 <https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
-=== fallback ===
-Ünïcødé <orders> & co: In progress (0/1)
 === thread ===
 === alerts ===

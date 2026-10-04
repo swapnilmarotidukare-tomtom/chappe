@@ -103,12 +103,12 @@ def test_default_context() -> None:
 
 def test_dump_message_set_lists_every_part() -> None:
     messages = MessageSet(
-        ParentMessage("p", "f"),
+        ParentMessage("p"),
         (ThreadEntry("process:failed", "t", broadcast=True),),
         (Alert("alert:x", "a"),),
     )
     assert dump_message_set(messages) == (
-        "=== parent ===\np\n=== fallback ===\nf\n"
+        "=== parent ===\np\n"
         "=== thread ===\n[process:failed] (broadcast) t\n"
         "=== alerts ===\n[alert:x] a\n"
     )

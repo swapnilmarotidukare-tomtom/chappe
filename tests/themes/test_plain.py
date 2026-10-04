@@ -37,7 +37,6 @@ def test_registered_as_plain() -> None:
 def test_every_sample_renders_and_states_the_process_state_in_words(name: str) -> None:
     messages = render(name)
     assert default_context("plain").label(SAMPLES[name].state) in messages.parent.text
-    assert messages.parent.fallback_text.strip()
 
 
 @pytest.mark.parametrize("name", ALL)

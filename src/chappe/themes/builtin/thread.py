@@ -23,9 +23,7 @@ class ThreadTheme:
     name: ClassVar[str] = "thread"
 
     def render(self, view: ProcessView, ctx: RenderContext) -> MessageSet:
-        done, total = view.progress
-        fallback = f"{view.title}: {ctx.label(view.state)} ({done}/{total})"
-        parent = ParentMessage(clip(self._parent(view, ctx), ctx.limits.parent_chars), fallback)
+        parent = ParentMessage(clip(self._parent(view, ctx), ctx.limits.parent_chars))
         return MessageSet(parent, self._thread(view, ctx), self._alerts(view, ctx))
 
     def _parent(self, view: ProcessView, ctx: RenderContext) -> str:

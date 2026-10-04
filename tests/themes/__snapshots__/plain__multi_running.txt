@@ -1,6 +1,4 @@
 === parent ===
 *orders 2026.10.1* · :hourglass_flowing_sand: In progress · 3/5 steps · <https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
-=== fallback ===
-orders 2026.10.1: In progress (3/5)
 === thread ===
 === alerts ===

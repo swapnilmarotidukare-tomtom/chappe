@@ -7,7 +7,5 @@
 :white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle::white_circle:  *Section 5* · Waiting
 Now: Step 3.1 (5m)
 <https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
-=== fallback ===
-fifty steps: In progress (20/50)
 === thread ===
 === alerts ===

@@ -3,7 +3,5 @@
 :white_check_mark::hourglass_flowing_sand::white_circle:  1/3 steps
 Now: Geometry (5m)
 <https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
-=== fallback ===
-orders 2026.10.1: In progress (1/3)
 === thread ===
 === alerts ===

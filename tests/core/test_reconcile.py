@@ -1,11 +1,12 @@
 # tests/core/test_reconcile.py
+from dataclasses import fields
 from datetime import datetime, timezone
 
 from hypothesis import given
 from hypothesis import strategies as st
 
 from chappe.core.messages import Alert, MessageSet, ParentMessage, ThreadEntry
-from chappe.core.reconcile import SentState, plan_sends, write_allowed
+from chappe.core.reconcile import SendPlan, SentState, plan_sends, write_allowed
 from chappe.core.view import Watermark
 
 T = datetime(2026, 10, 2, tzinfo=timezone.utc)
@@ -19,7 +20,7 @@ def messages(
     text: str = "p", keys: tuple[str, ...] = ("a",), alerts: tuple[str, ...] = ()
 ) -> MessageSet:
     return MessageSet(
-        ParentMessage(text, text),
+        ParentMessage(text),
         tuple(ThreadEntry(k, k) for k in keys),
         tuple(Alert(k, k) for k in alerts),
     )
@@ -27,7 +28,7 @@ def messages(
 
 def test_first_event_posts_the_parent_and_every_entry() -> None:
     plan = plan_sends(messages(keys=("a", "b"), alerts=("x",)), None)
-    assert plan.post_parent and not plan.update_parent
+    assert not plan.update_parent
     assert [e.key for e in plan.entries] == ["a", "b"]
     assert [a.key for a in plan.alerts] == ["x"]
 
@@ -36,9 +37,10 @@ def test_known_parent_is_edited_only_when_its_text_changed() -> None:
     sent = SentState(
         "k", parent_ref=PARENT, parent_text="p", watermark=RUNNING, sent_keys=frozenset({"a"})
     )
-    assert plan_sends(messages("p", ("a",)), sent).empty
+    unchanged = plan_sends(messages("p", ("a",)), sent)
+    assert not (unchanged.update_parent or unchanged.entries or unchanged.alerts)
     plan = plan_sends(messages("q", ("a", "b")), sent)
-    assert plan.update_parent and not plan.post_parent
+    assert plan.update_parent
     assert [e.key for e in plan.entries] == ["b"]
 
 
@@ -60,3 +62,10 @@ def test_plan_never_resends_known_keys(rendered: set[str], known: set[str]) -> N
     sent = SentState("k", parent_ref=PARENT, parent_text="p", sent_keys=frozenset(known))
     plan = plan_sends(messages("p", tuple(sorted(rendered))), sent)
     assert {e.key for e in plan.entries} == rendered - known
+
+
+def test_messages_and_plans_carry_only_what_the_engine_uses() -> None:
+    """No dead fields: the transport sends no fallback text, and the engine posts the parent
+    whenever no parent is stored."""
+    assert [f.name for f in fields(ParentMessage)] == ["text"]
+    assert [f.name for f in fields(SendPlan)] == ["update_parent", "entries", "alerts"]
