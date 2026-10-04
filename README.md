@@ -55,7 +55,54 @@ The full reference is in [docs/guides/configuration.md](docs/guides/configuratio
 
 ## Install
 
-Filled in by the 0.0.1 release.
+Chappe 0.0.1 is distributed as a wheel committed to this private repository under `releases/`, at the tag `v0.0.1`. There is no package index and nothing is published to PyPI. Download the wheel and its `.sha256` file from the tag through the GitHub API, check the hash, then install the wheel with the Airflow constraints for your Airflow version and Python. Replace `<org>/<repo>` with this repository.
+
+The token is a fine-grained GitHub token with read-only Contents access to this repository. Keep it in your CI's secret store. Never put it in a URL, a Dockerfile `ARG` or `ENV`, or a file that ends up in an image layer.
+
+### In a Docker image
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM apache/airflow:3.2.2-python3.12
+RUN --mount=type=secret,id=gh_token,uid=50000 \
+    set -eu; cd /tmp; \
+    for f in chappe-0.0.1-py3-none-any.whl chappe-0.0.1-py3-none-any.whl.sha256; do \
+      curl -fsSL -H "Authorization: Bearer $(cat /run/secrets/gh_token)" \
+           -H "Accept: application/vnd.github.raw" \
+           -o "$f" "https://api.github.com/repos/<org>/<repo>/contents/releases/$f?ref=v0.0.1"; \
+    done; \
+    sha256sum -c chappe-0.0.1-py3-none-any.whl.sha256; \
+    pip install --no-cache-dir chappe-0.0.1-py3-none-any.whl \
+      -c https://raw.githubusercontent.com/apache/airflow/constraints-3.2.2/constraints-3.12.txt; \
+    rm -f chappe-0.0.1-py3-none-any.whl*
+```
+
+Build it with the token passed as a build secret:
+
+```bash
+DOCKER_BUILDKIT=1 docker build --secret id=gh_token,env=GH_TOKEN .
+```
+
+- The secret is mounted only for that `RUN` step and never lands in a layer. `uid=50000` is the user of the official Airflow image; change it if your image runs as another user.
+- No credentials appear in a URL. The token goes in a request header.
+- The wheel's SHA256 is checked before it is installed. A mismatch stops the build.
+- Match the image tag, the constraints version and the Python version to your deployment. Instead of the upstream constraints URL you can use the file vendored in this repository, `constraints/airflow-3.2.2-py3.12.txt`.
+
+### Without Docker
+
+Use the same download, check and install steps, with the token read from an environment variable that is never echoed or logged:
+
+```bash
+for f in chappe-0.0.1-py3-none-any.whl chappe-0.0.1-py3-none-any.whl.sha256; do
+  curl -fsSL -H "Authorization: Bearer ${GH_TOKEN:?set GH_TOKEN}" \
+       -H "Accept: application/vnd.github.raw" \
+       -o "$f" "https://api.github.com/repos/<org>/<repo>/contents/releases/$f?ref=v0.0.1"
+done
+sha256sum -c chappe-0.0.1-py3-none-any.whl.sha256   # on macOS: shasum -a 256 -c
+pip install chappe-0.0.1-py3-none-any.whl -c constraints/airflow-3.2.2-py3.12.txt
+```
+
+The SHA256 of the release is in the committed `.sha256` file and in the [changelog](CHANGELOG.md).
 
 ## Known limits of 0.0.1
 

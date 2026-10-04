@@ -14,7 +14,7 @@
   - The entry-point registry, once the first external theme or store exists, and the remaining conformance suites.
 - Later: processes spanning several DAGs in 0.0.3; retries and repairs in 0.0.4, which also lifts the sticky-finish limit and the cleared-task header.
 
-## 0.0.1 (unreleased)
+## 0.0.1 (2026-10-04)
 
 - One live Slack message per Airflow DAG run, edited in place, with step history in its thread.
 - `@milestone` decorator and `ChappeNotifier` (notifier mode). Requires Airflow 3.2.x.

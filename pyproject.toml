@@ -1,6 +1,6 @@
 [project]
 name = "chappe"
-version = "0.0.1.dev0"
+version = "0.0.1"
 description = "Relays Apache Airflow run progress to chat: one live message per run, history in its thread."
 readme = "README.md"
 requires-python = ">=3.10"

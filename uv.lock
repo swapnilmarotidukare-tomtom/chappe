@@ -1217,7 +1217,7 @@ wheels = [
 
 [[package]]
 name = "chappe"
-version = "0.0.1.dev0"
+version = "0.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },
