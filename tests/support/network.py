@@ -1,7 +1,15 @@
 """The test suite's network block: non-loopback connects, name lookups and datagrams raise.
 
 Every blocked attempt is also recorded, so a test whose code swallows the error still fails, and
-an attempt outside any test (collection, a module- or session-scoped fixture) fails the session.
+an attempt outside a test's recording window (collection, a module- or session-scoped fixture)
+fails the session.
+
+Known limits:
+- Entry-point plugins' import-time code and their pytest_configure run before tests/conftest.py
+  installs the block, so they are not covered.
+- C-level networking that bypasses Python's socket module (e.g. grpcio, libcurl) is not blocked.
+- A forked child inherits the patches but records attempts in its own memory, so they never reach
+  this process; spawned or exec'd processes (subprocess, multiprocessing "spawn") get no block.
 """
 
 from __future__ import annotations
@@ -24,7 +32,8 @@ def fail_if_blocked(attempts: list[str]) -> None:
 
 def describe_outside_attempts(attempts: list[str]) -> str:
     return (
-        "network access was attempted outside any test (collection or a module/session fixture): "
+        "network access was attempted outside a test's recording window (collection, a "
+        "module/session fixture, or a fixture set up before/torn down after network_attempts): "
         + ", ".join(attempts)
     )
 
@@ -35,6 +44,7 @@ class NetworkGuard:
 
     def __init__(self) -> None:
         self.installed = False
+        self._depth = 0  # nested install()s, e.g. an in-process pytester run of tests.conftest
         self.test_attempts: list[str] | None = None  # set while a test runs
         self.outside_attempts: list[str] = []
         self._saved: list[tuple[Any, str, Any]] = []
@@ -56,6 +66,8 @@ class NetworkGuard:
         raise RuntimeError(f"network access is blocked in tests: {host}")
 
     def install(self) -> None:
+        """Patch the socket module; a nested call only counts, so its uninstall() keeps ours."""
+        self._depth += 1
         if self.installed:
             return
         check = self.check
@@ -65,6 +77,7 @@ class NetworkGuard:
         real_sendmsg = socket.socket.sendmsg
         real_create_connection = socket.create_connection
         real_getaddrinfo = socket.getaddrinfo
+        real_getnameinfo = socket.getnameinfo
 
         def connect(self: socket.socket, address: Any) -> None:
             if self.family != socket.AF_UNIX:
@@ -98,6 +111,10 @@ class NetworkGuard:
                 check((host,))
             return real_getaddrinfo(host, *args, **kwargs)
 
+        def getnameinfo(sockaddr: Any, flags: int) -> Any:
+            check(sockaddr)  # a reverse lookup of the address tuple's host
+            return real_getnameinfo(sockaddr, flags)
+
         def lookup(real: Callable[..., Any]) -> Callable[..., Any]:
             def blocked(host: Any, *args: Any, **kwargs: Any) -> Any:
                 check((host,))
@@ -112,6 +129,7 @@ class NetworkGuard:
             (socket.socket, "sendmsg", sendmsg),
             (socket, "create_connection", create_connection),
             (socket, "getaddrinfo", getaddrinfo),
+            (socket, "getnameinfo", getnameinfo),
         ]
         for name in ("gethostbyname", "gethostbyname_ex", "gethostbyaddr"):
             patches.append((socket, name, lookup(getattr(socket, name))))
@@ -121,6 +139,12 @@ class NetworkGuard:
         self.installed = True
 
     def uninstall(self) -> None:
+        """Undo one install(); the patches go only when the outermost install is undone."""
+        if self._depth == 0:
+            return
+        self._depth -= 1
+        if self._depth > 0:
+            return
         for owner, name, original in reversed(self._saved):
             setattr(owner, name, original)
         self._saved.clear()

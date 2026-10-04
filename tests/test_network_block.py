@@ -137,11 +137,13 @@ def test_block_is_installed_before_collection() -> None:
 @pytest.fixture(scope="module")
 def module_scope_attempts() -> list[str]:
     """A blocked lookup from a module-scoped fixture, outside the per-test window."""
+    start = len(GUARD.outside_attempts)
     if GUARD.installed:  # never risk a real lookup if the block is missing
         with contextlib.suppress(RuntimeError):
             socket.gethostbyname("slack.invalid")
-    seen = list(GUARD.outside_attempts)
-    GUARD.outside_attempts.clear()  # deliberate: the session check would otherwise fail the run
+    seen = GUARD.outside_attempts[start:]
+    # deliberate: remove only our own attempt; earlier ones must still fail the session
+    del GUARD.outside_attempts[start:]
     return seen
 
 
@@ -175,15 +177,82 @@ def test_attempts_fail_the_test_or_the_session(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A child pytest run with this suite's conftest as a plugin."""
-    monkeypatch.setenv("PYTHONPATH", str(ROOT))
+    monkeypatch.setenv("PYTHONPATH", str(ROOT), prepend=os.pathsep)
     pytester.makepyfile(test_child=_CHILD_TESTS)
     result = pytester.runpytest_subprocess("-p", "tests.conftest", "-p", "no:cacheprovider")
     result.assert_outcomes(passed=2, errors=1)  # the teardown error is on a passed test
     result.stdout.fnmatch_lines(
         [
             "*network access was attempted in tests: slack.invalid*",
-            "*network access was attempted outside any test (collection or a module/session "
-            "fixture): slack.invalid",
+            "*network access was attempted outside a test's recording window (collection, a "
+            "module/session fixture, or a fixture set up before/torn down after "
+            "network_attempts): slack.invalid",
         ]
     )
     assert result.ret == pytest.ExitCode.TESTS_FAILED
+
+
+_CHILD_COLLECTION_ONLY = """
+import contextlib
+import socket
+
+from tests.support.network import GUARD
+
+if GUARD.installed:  # never risk a real lookup if the block is missing
+    with contextlib.suppress(RuntimeError):
+        socket.gethostbyname("slack.invalid")  # at collection
+
+
+def test_passes():
+    pass
+"""
+
+
+def test_an_outside_attempt_alone_fails_the_session(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PYTHONPATH", str(ROOT), prepend=os.pathsep)
+    pytester.makepyfile(test_child=_CHILD_COLLECTION_ONLY)
+    result = pytester.runpytest_subprocess("-p", "tests.conftest", "-p", "no:cacheprovider")
+    result.assert_outcomes(passed=1)
+    result.stdout.fnmatch_lines(
+        [
+            "*network access was attempted outside a test's recording window (collection, a "
+            "module/session fixture, or a fixture set up before/torn down after "
+            "network_attempts): slack.invalid",
+        ]
+    )
+    assert result.ret == pytest.ExitCode.TESTS_FAILED
+
+
+def _block_is_active() -> bool:
+    return "NetworkGuard" in getattr(socket.getaddrinfo, "__qualname__", "")
+
+
+def test_a_nested_install_and_uninstall_keep_the_session_block() -> None:
+    """An in-process run loading tests.conftest installs and uninstalls on top of ours."""
+    assert _block_is_active()
+    try:
+        GUARD.install()
+        GUARD.uninstall()
+        assert GUARD.installed
+        assert _block_is_active()
+    finally:
+        if not _block_is_active():  # restore the session block for the remaining tests
+            GUARD.installed = False
+            GUARD.install()
+
+
+def test_reverse_name_lookups_are_blocked(network_attempts: list[str]) -> None:
+    # checked first: an unpatched getnameinfo would do a real reverse lookup
+    assert "NetworkGuard" in getattr(socket.getnameinfo, "__qualname__", "")
+    with pytest.raises(RuntimeError, match=r"network access is blocked in tests: 192\.0\.2\.1"):
+        socket.getnameinfo((TEST_NET_ADDRESS, 80), 0)
+    assert network_attempts == [TEST_NET_ADDRESS]
+    network_attempts.clear()
+
+
+def test_loopback_reverse_name_lookups_are_allowed() -> None:
+    assert "NetworkGuard" in getattr(socket.getnameinfo, "__qualname__", "")
+    flags = socket.NI_NUMERICHOST | socket.NI_NUMERICSERV
+    assert socket.getnameinfo(("127.0.0.1", 80), flags) == ("127.0.0.1", "80")
