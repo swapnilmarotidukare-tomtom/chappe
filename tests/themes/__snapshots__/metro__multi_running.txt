@@ -8,7 +8,7 @@
 ┃
 ●  Aggregates
 ┗━ Regression vs baseline 2026.10.0
-    ◉  ID stability       running 5m
+    ◉  ID stability      since 13:54
     ○  Regression
 ```
 <https://airflow.invalid/dags/orders/runs/run_1|Airflow run>

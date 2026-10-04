@@ -54,7 +54,7 @@ class MetroTheme:
     # ---- parent ----
 
     def _parent(self, view: ProcessView, ctx: RenderContext) -> str:
-        head = [ctx.fmt.bold(clip(view.title, TITLE_CHARS)), self._status(view, ctx)]
+        head = [ctx.fmt.bold(_inline(clip(view.title, TITLE_CHARS))), self._status(view, ctx)]
         links = " · ".join(ctx.fmt.link(link.url, link.label) for link in view.links)
         tail = [links] if links else []
         limit = ctx.limits.parent_chars
@@ -136,8 +136,9 @@ class MetroTheme:
         if step.state is StepState.SUCCEEDED:
             return ctx.duration(took) if timed else ""
         if step.state is StepState.RUNNING:
-            running = words.get("running", "running")
-            return f"{running} {ctx.duration(took)}" if took is not None else running
+            if step.started_at is None:
+                return words.get("running", "running")
+            return f"{words.get('since', 'since')} {ctx.clock(step.started_at)}"
         if step.state is StepState.FAILED:
             if timed:
                 return f"{words.get('failed_after', 'failed after')} {ctx.duration(took)}"

@@ -1,4 +1,5 @@
 import re
+from collections.abc import Callable
 from dataclasses import replace
 
 from chappe.core.model import ProcessState, StepState
@@ -6,7 +7,13 @@ from chappe.core.render import Limits
 from chappe.core.view import ProcessView
 from chappe.themes import THEMES
 from chappe.themes.builtin.metro import FENCE, LINE_WIDTH, MetroTheme
-from tests.support.samples import SAMPLES, TEST_MENTION, ProcessViewBuilder, default_context
+from tests.support.samples import (
+    SAMPLES,
+    TEST_MENTION,
+    ProcessViewBuilder,
+    default_context,
+    dump_message_set,
+)
 
 S, R, P, F, K = (
     StepState.SUCCEEDED,
@@ -33,11 +40,12 @@ def block(text: str) -> list[str]:
 
 
 def four_steps() -> ProcessViewBuilder:
-    # BASE is 08:05 UTC; Extract runs 08:05-08:07 (timed), Transform starts 08:07, now = 08:12
+    # BASE is 08:05 UTC; Extract ends 08:07 (untimed: its times come only from its own callback),
+    # Transform starts 08:07 and is timed, now = 08:12
     return (
         ProcessViewBuilder()
         .section("Main")
-        .step("Extract", S, 2)
+        .step("Extract", S, 2, timed=False)
         .step("Transform", R)
         .step("Load", P)
         .step("Report", P)
@@ -54,9 +62,9 @@ def test_running_run_renders_title_status_stations_and_link() -> None:
         "*orders 2026.10.1*",
         ":large_yellow_circle: In progress · started 08:05 · 7m",
         FENCE,
-        "●  Extract" + " " * 24 + "2m",
+        "●  Extract",
         "┃",
-        "◉  Transform" + " " * 14 + "running 5m",
+        "◉  Transform" + " " * 13 + "since 08:07",
         "┆",
         "○  Load",
         "┆",
@@ -113,15 +121,15 @@ def visible(line: str) -> str:
 
 def test_a_long_name_is_cut_to_the_line_width() -> None:
     (line,) = block(parent(SAMPLES["unicode_long"]))
-    # "running 5m" takes 10 characters plus one space; the name gets 22 and ends with "…"
-    assert line == "◉  Generate &amp; consolidat… running 5m"
+    # "since 08:07" takes 11 characters plus one space; the name gets 21 and ends with "…"
+    assert line == "◉  Generate &amp; consolida… since 08:05"
     assert len(visible(line)) == LINE_WIDTH
 
 
 def test_escaping_does_not_shift_the_alignment() -> None:
     view = ProcessViewBuilder().section("Main").step("A & B <c>", R).build()
     (line,) = block(parent(view))
-    assert line == "◉  A &amp; B &lt;c&gt;" + " " * 14 + "running 5m"
+    assert line == "◉  A &amp; B &lt;c&gt;" + " " * 13 + "since 08:05"
     assert len(visible(line)) == LINE_WIDTH
 
 
@@ -197,7 +205,7 @@ def test_no_alert_unless_failed() -> None:
     assert MetroTheme().render(SAMPLES["single_passed"], default_context("metro")).alerts == ()
 
 
-def test_a_title_cannot_close_the_fence_or_break_the_line() -> None:
+def test_a_step_title_cannot_close_the_fence_or_break_the_line() -> None:
     view = ProcessViewBuilder().section("Main").step("a```b\nc", R).build()
     text = parent(view)
     assert text.split("\n").count(FENCE) == 2
@@ -227,6 +235,35 @@ def test_when_no_block_fits_the_link_is_kept_whole() -> None:
 
 
 def test_token_overrides_reach_the_stations() -> None:
-    ctx = default_context("metro", {"extra": {"glyph_running": "*", "running": "läuft"}})
+    ctx = default_context("metro", {"extra": {"glyph_running": "*", "since": "seit"}})
     lines = block(MetroTheme().render(four_steps().build(), ctx).parent.text)
-    assert lines[2] == "*  Transform" + " " * 16 + "läuft 5m"
+    assert lines[2] == "*  Transform" + " " * 14 + "seit 08:07"
+
+
+def test_a_process_title_cannot_close_the_fence_or_break_the_line() -> None:
+    text = parent(ProcessViewBuilder(title="a```b\nc").section("Main").step("One", R).build())
+    lines = text.split("\n")
+    assert lines[0] == "*a'''b c*"
+    assert lines.count(FENCE) == 2
+
+
+def minimal_dag_callback() -> ProcessView:
+    """The minimal DAG-callback context: no run start date, so no start time and no duration."""
+    return (
+        ProcessViewBuilder(known_start=False)
+        .section("Main")
+        .step("Parquet → Delta", S, 78, timed=False)
+        .step("Geometry", S, 261, timed=False)
+        .finished(ProcessState.SUCCEEDED)
+        .build()
+    )
+
+
+def test_the_status_line_omits_start_and_duration_when_unknown() -> None:
+    status = parent(minimal_dag_callback()).split("\n")[1]
+    assert status == ":large_green_circle: Passed"
+
+
+def test_snapshot_minimal_dag_callback(chappe_snapshot: Callable[[str, str], None]) -> None:
+    messages = MetroTheme().render(minimal_dag_callback(), default_context("metro"))
+    chappe_snapshot("metro__minimal_dag_callback", dump_message_set(messages))
