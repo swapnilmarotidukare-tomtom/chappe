@@ -163,6 +163,7 @@ def test_passing_run_posts_one_message_and_nothing_in_its_thread(
 
     (parent,) = api.top_level(CHANNEL)
     lines = parent.text.split("\n")
+    # a known limit: README.md, "Known limits of 0.0.1" (DAG callback without dag_run or params)
     # the notifier's minimal DAG-callback context carries no params and no run times, so the
     # title falls back to "<dag_id> · <run_id>" and the status line has no "started" part
     assert lines[0].startswith("*chappe_example · ")

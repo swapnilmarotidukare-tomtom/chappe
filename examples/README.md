@@ -57,7 +57,7 @@ Check each scenario in the test channel. After every run, also check:
 
 | Scenario | Command | Expected |
 |---|---|---|
-| Passing run | `airflow dags trigger chappe_example` | One message: a title, a status line that moves from 🟡 In progress to 🟢 Passed, and four stations (Extract, Transform, Load, Report) that turn from ○ to ● with their durations. Nothing is posted in its thread. Admin → Variables shows one `chappe__chappe_example__…` Variable with a masked value |
+| Passing run | `airflow dags trigger chappe_example` | One message: a title, a status line that moves from 🟡 In progress to 🟢 Passed, and four stations (Extract, Transform, Load, Report) that turn from ○ to ●. During the run, each update shows only the duration of the step whose callback made it; the final message shows every station ● without a duration, and the run's total time on the status line (see [Known limits](../README.md#known-limits-of-001)). Nothing is posted in its thread. Admin → Variables shows one `chappe__chappe_example__…` Variable with a masked value |
 | Failing run | `airflow dags trigger chappe_example --conf '{"fail": true}'` | 🔴 Failed, the Load station shows ✖, Report shows ✖ too (Airflow marks it upstream_failed), and one alert in the thread mentions you |
 | Two parallel runs | run `airflow dags trigger chappe_example` twice within a second | Two separate messages, one per run, no interleaving. If a duplicate parent appears for a moment, it is deleted and one message per run remains |
 | Cleared task after finish | after a passing run, clear `load` in that run (UI: task → Clear, without downstream) | Known limit: the message keeps showing "Passed" while the task runs again. It shows the new final status only when the run finishes again |
