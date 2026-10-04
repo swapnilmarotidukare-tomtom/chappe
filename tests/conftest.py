@@ -21,6 +21,7 @@ elif os.environ.get("CI"):
     settings.load_profile("ci")
 
 _AIRFLOW_HOME = pytest.StashKey[str]()
+_SAVED_ENV = pytest.StashKey[dict[str, str | None]]()
 
 # Rich assertion diffs inside the helpers in tests/support.
 pytest.register_assert_rewrite("tests.support")
@@ -36,13 +37,22 @@ def pytest_configure(config: pytest.Config) -> None:
         raise pytest.UsageError("airflow was imported before tests/conftest.py could isolate it")
     home = tempfile.mkdtemp(prefix="chappe-airflow-home-")
     config.stash[_AIRFLOW_HOME] = home
-    os.environ["AIRFLOW_HOME"] = home
-    os.environ["AIRFLOW__DATABASE__SQL_ALCHEMY_CONN"] = f"sqlite:///{home}/airflow.db"
-    os.environ["AIRFLOW__CORE__DAGS_FOLDER"] = os.path.join(home, "dags")
-    os.environ["AIRFLOW__CORE__LOAD_EXAMPLES"] = "False"
+    env = {
+        "AIRFLOW_HOME": home,
+        "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN": f"sqlite:///{home}/airflow.db",
+        "AIRFLOW__CORE__DAGS_FOLDER": os.path.join(home, "dags"),
+        "AIRFLOW__CORE__LOAD_EXAMPLES": "False",
+    }
+    config.stash[_SAVED_ENV] = {name: os.environ.get(name) for name in env}
+    os.environ.update(env)
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
+    for name, value in config.stash.get(_SAVED_ENV, {}).items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
     home = config.stash.get(_AIRFLOW_HOME, None)
     if home is not None:
         shutil.rmtree(home, ignore_errors=True)

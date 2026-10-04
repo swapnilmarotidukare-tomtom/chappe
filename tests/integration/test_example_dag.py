@@ -31,15 +31,25 @@ DAGS = ROOT / "examples/dags"
 CHANNEL = "C0123456789"
 
 
-@pytest.fixture(scope="module", autouse=True)
-def airflow_db() -> None:
-    """A fresh sqlite metadata DB in the throwaway AIRFLOW_HOME set by tests/conftest.py."""
+_db_ready = False
+
+
+@pytest.fixture(autouse=True)
+def airflow_db(network_attempts: list[str]) -> None:
+    """A fresh sqlite metadata DB in the throwaway AIRFLOW_HOME set by tests/conftest.py.
+
+    Function-scoped so it runs inside the network block; the DB is built once per session.
+    """
+    global _db_ready
+    if _db_ready:
+        return
     from airflow import settings
     from airflow.utils.db import initdb
 
     home = os.environ["AIRFLOW_HOME"]
     assert str(settings.engine.url) == f"sqlite:///{home}/airflow.db"  # never ~/airflow
     initdb()
+    _db_ready = True
 
 
 @pytest.fixture(autouse=True)
@@ -94,10 +104,29 @@ def wire(
     return api, store
 
 
-def run(module: ModuleType, conf: dict[str, Any], reason: str) -> str:
+def run(module: ModuleType, api: FakeSlackApi, conf: dict[str, Any], reason: str) -> str:
     dag_run = module.dag.test(run_conf=conf)
+    assert str(getattr(dag_run.state, "value", dag_run.state)) == (
+        "success" if reason == "success" else "failed"
+    )
+    # What the task callbacks (@milestone) left during dag.test(): a parent, not yet final.
+    assert any(name == "post" for name, _ in api.calls)
+    (parent,) = api.top_level(CHANNEL)
+    assert "In progress" in parent.text
+    assert "Passed" not in parent.text and "Failed" not in parent.text
+    assert api.replies(CHANNEL, parent.ts) == []
+    # The DAG callback, as the DAG processor sends it (minimal context, finding 5). On Airflow
+    # 3.2.2, dag.test()'s own DAG callback fails before notify() (BaseNotifier renders templates
+    # against a SerializedDAG), so the "exactly one final reply" checks below do not exercise
+    # the dedup of a second final event.
     ChappeNotifier().notify({"dag": module.dag, "run_id": dag_run.run_id, "reason": reason})
     return str(dag_run.run_id)
+
+
+def assert_kept(store: AirflowVariableStore, run_id: str, parent_ts: str) -> None:
+    stored = store.load(process_key("chappe_example", run_id))
+    assert stored is not None and stored.parent_ref == parent_ts
+    assert stored.watermark is not None and stored.watermark.finished
 
 
 def test_passing_run_posts_one_parent_and_keeps_the_variable(
@@ -105,27 +134,27 @@ def test_passing_run_posts_one_parent_and_keeps_the_variable(
 ) -> None:
     module = load_example()
     api, store = wire(monkeypatch, {t.task_id: "success" for t in module.dag.tasks})
-    run_id = run(module, {}, "success")
+    run_id = run(module, api, {}, "success")
 
     (parent,) = api.top_level(CHANNEL)
     assert "Passed" in parent.text and "4/4" in parent.text  # cleanup_tmp is not a milestone
     (final,) = api.replies(CHANNEL, parent.ts)
     assert "Passed" in final.text
-    stored = store.load(process_key("chappe_example", run_id))
-    assert stored is not None and stored.parent_ref == parent.ts
-    assert stored.watermark is not None and stored.watermark.finished
+    assert_kept(store, run_id, parent.ts)
 
 
 def test_failing_run_ends_failed_with_an_alert(monkeypatch: pytest.MonkeyPatch) -> None:
     module = load_example()
     states = {t.task_id: "success" for t in module.dag.tasks}
     states["compare.regression"] = "failed"
-    api, _ = wire(monkeypatch, states)
-    run(module, {"fail": True}, "task_failure")
+    api, store = wire(monkeypatch, states)
+    run_id = run(module, api, {"fail": True}, "task_failure")
 
     (parent,) = api.top_level(CHANNEL)
     assert "Failed" in parent.text
     replies = [m.text for m in api.replies(CHANNEL, parent.ts)]
-    assert any(
-        text.startswith("<@U0123456789>") and "Regression checks" in text for text in replies
-    )
+    alerts = [text for text in replies if text.startswith("<@U0123456789>")]
+    (final,) = [text for text in replies if text not in alerts]  # exactly one final reply
+    assert "Failed" in final
+    assert any("Regression checks" in text for text in alerts)
+    assert_kept(store, run_id, parent.ts)
