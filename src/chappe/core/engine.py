@@ -354,7 +354,11 @@ class Engine:
             parent_written=wm,
             parent_wms={mine: wm},
         )
-        state = self._record(key, claim)
+        try:
+            state = self._record(key, claim)
+        except Exception:
+            self._delete_unsaved(key, mine, deadline)
+            raise
         # verify: without compare-and-set, a parallel stale write can drop `mine`
         for _ in range(2):
             loaded = self._load(key, deadline)
@@ -376,6 +380,19 @@ class Engine:
         if state.watermark is not None and state.watermark.newer_than(wm):
             return None
         return self._write_parent(key, winner, text, wm, deadline)
+
+    def _delete_unsaved(self, key: str, ts: str, deadline: float) -> None:
+        """Best effort: a parent whose claim was never saved is invisible to every later event,
+        which would post another one next to it."""
+        try:
+            self._transport.delete(self._settings.channel, ts, deadline=deadline)
+        except Exception:
+            log.warning(
+                "chappe: could not delete the unsaved parent %s of %s; it may stay as an orphan",
+                ts,
+                key,
+                exc_info=True,
+            )
 
     def _write_parent(
         self, key: str, ts: str, text: str, wm: Watermark, deadline: float

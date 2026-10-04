@@ -902,3 +902,40 @@ def test_an_event_that_loses_the_parent_after_the_run_finished_sends_nothing() -
     assert a.handle(own) is HandleResult.YIELDED
     (reply,) = thread_replies(api, "Transform")
     assert "4h 21m" not in reply  # the final event's fallback; nothing older follows it
+
+
+def test_a_parent_whose_claim_cannot_be_saved_is_deleted(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Review m-2: an untracked parent would stay as an orphan next to the next event's post."""
+    api, variables = FakeSlackApi(), FakeVariables()
+
+    def database_down(key: str, value: str) -> None:
+        raise RuntimeError("metadata database down")
+
+    variables.before_set = database_down
+    with caplog.at_level(logging.ERROR, logger="chappe"):
+        assert writer(api, variables).handle(stage(R, P, P)) is HandleResult.ERROR
+    assert api.top_level(CHANNEL) == []
+    assert len(api.deleted) == 1
+    assert "metadata database down" in caplog.text  # the store error is still reported
+
+    variables.before_set = None
+    assert writer(api, variables).handle(stage(S, R, P)) is HandleResult.SENT
+    assert len(api.top_level(CHANNEL)) == 1  # the next event posts the only parent
+
+
+def test_a_failed_cleanup_of_an_unsaved_claim_keeps_the_store_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    api, variables = FakeSlackApi(), FakeVariables()
+
+    def database_down(key: str, value: str) -> None:
+        api.fail_next(TransportError("internal_error", retryable=False))  # the delete fails too
+        raise RuntimeError("metadata database down")
+
+    variables.before_set = database_down
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        assert writer(api, variables).handle(stage(R, P, P)) is HandleResult.ERROR
+    assert "could not delete the unsaved parent" in caplog.text
+    assert "metadata database down" in caplog.text
