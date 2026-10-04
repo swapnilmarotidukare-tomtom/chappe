@@ -81,6 +81,10 @@ class _MilestoneTask:
         return _MilestoneTask(self._inner.override(*args, **kwargs), self._spec)
 
     def __getattr__(self, name: str) -> Any:
+        # copy/deepcopy build the wrapper without __init__ and probe dunders such as
+        # __setstate__: forwarding those (or a missing _inner) would recurse forever
+        if name in ("_inner", "_spec") or (name.startswith("__") and name.endswith("__")):
+            raise AttributeError(name)
         return getattr(self._inner, name)
 
 

@@ -1,3 +1,4 @@
+import copy
 import logging
 
 import pytest
@@ -253,3 +254,22 @@ def test_partial_expand_is_ignored_with_a_warning(caplog: pytest.LogCaptureFixtu
         compare.partial(base="x").expand(version=["a", "b"])
     assert "mapped tasks are not supported" in caplog.text
     assert build_structure(dag, process()).steps == ()
+
+
+def test_a_milestone_task_can_be_copied() -> None:
+    """copy and deepcopy build the wrapper without `__init__`; lookups must not recurse."""
+    with DAG("orders_pipeline", schedule=None) as dag:
+
+        @milestone("Convert")
+        @task
+        def convert() -> None:
+            return None
+
+        shallow = copy.copy(convert)
+        deep = copy.deepcopy(convert)
+        shallow.override(task_id="shallow")()
+        deep.override(task_id="deep")()
+
+    for task_id in ("shallow", "deep"):
+        spec = milestone_spec(dag.get_task(task_id))
+        assert spec is not None and spec.title == "Convert"
