@@ -47,7 +47,13 @@ def chappe_snapshot(request: pytest.FixtureRequest) -> Callable[[str, str], None
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
-def _check_target(target: Any) -> None:
+def fail_if_blocked(attempts: list[str]) -> None:
+    """Fail the running test if any network attempt was blocked (a caught raise is not enough)."""
+    if attempts:
+        pytest.fail(f"network access was attempted in tests: {', '.join(attempts)}", pytrace=False)
+
+
+def _check_target(target: Any, attempts: list[str] | None = None) -> None:
     """Raise unless target is loopback or a unix socket path."""
     if isinstance(target, (str, bytes)):  # AF_UNIX path
         return
@@ -56,12 +62,18 @@ def _check_target(target: Any) -> None:
         host = host.decode(errors="replace")
     if host in _LOOPBACK_HOSTS:
         return
+    if attempts is not None:
+        attempts.append(str(host))
     raise RuntimeError(f"network access is blocked in tests: {host}")
 
 
 @pytest.fixture(autouse=True)
-def _block_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Fail any test that tries to reach a non-loopback host."""
+def network_attempts(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
+    """Block non-loopback network use and record each attempt; fail at teardown if any.
+
+    A test that deliberately provokes a block clears the yielded list after asserting on it.
+    """
+    attempts: list[str] = []
     real_connect = socket.socket.connect
     real_connect_ex = socket.socket.connect_ex
     real_create_connection = socket.create_connection
@@ -69,24 +81,26 @@ def _block_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
     def connect(self: socket.socket, address: Any) -> None:
         if self.family != socket.AF_UNIX:
-            _check_target(address)
+            _check_target(address, attempts)
         return real_connect(self, address)
 
     def connect_ex(self: socket.socket, address: Any) -> int:
         if self.family != socket.AF_UNIX:
-            _check_target(address)
+            _check_target(address, attempts)
         return real_connect_ex(self, address)
 
     def create_connection(address: Any, *args: Any, **kwargs: Any) -> socket.socket:
-        _check_target(address)
+        _check_target(address, attempts)
         return real_create_connection(address, *args, **kwargs)
 
     def getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
-        _check_target((host,))
+        if host not in (None, "", "0.0.0.0", "::"):
+            _check_target((host,), attempts)
         return real_getaddrinfo(host, *args, **kwargs)
 
     monkeypatch.setattr(socket.socket, "connect", connect)
     monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
     monkeypatch.setattr(socket, "create_connection", create_connection)
     monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
-    yield
+    yield attempts
+    fail_if_blocked(attempts)

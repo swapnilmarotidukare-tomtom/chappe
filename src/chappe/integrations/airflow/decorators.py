@@ -25,17 +25,20 @@ def _append_callback(op: BaseOperator, attr: str, callback: Callable[..., None])
     current = getattr(op, attr)
     if current is None:
         updated: list[Any] = [callback]
-    elif isinstance(current, list):
-        updated = current if callback in current else [*current, callback]
+    elif isinstance(current, (list, tuple)):
+        updated = list(current) if callback in current else [*current, callback]
     else:
         updated = [current] if current is callback else [current, callback]
     setattr(op, attr, updated)
 
 
 def mark_operator(op: BaseOperator, spec: MilestoneSpec) -> BaseOperator:
-    setattr(op, MARKER_ATTR, spec)
-    for attr, callback in _CALLBACKS:
-        _append_callback(op, attr, callback)
+    try:
+        setattr(op, MARKER_ATTR, spec)
+        for attr, callback in _CALLBACKS:
+            _append_callback(op, attr, callback)
+    except Exception:
+        log.warning("chappe: could not mark %r as a milestone; it will not be reported", op)
     return op
 
 
@@ -77,7 +80,10 @@ def milestone(target: Any = None, title: str | None = None, *, section: str | No
     if isinstance(target, BaseOperator):
         return mark_operator(target, MilestoneSpec(title, section))
     if target is not None and not isinstance(target, str):
-        return _MilestoneTask(target, MilestoneSpec(None, section))
+        if callable(target) and hasattr(target, "expand"):
+            return _MilestoneTask(target, MilestoneSpec(None, section))
+        log.warning("chappe: @milestone cannot mark %r; it will not be reported", target)
+        return target
     spec = MilestoneSpec(target, section)
 
     def decorate(task_decorator: Any) -> _MilestoneTask:

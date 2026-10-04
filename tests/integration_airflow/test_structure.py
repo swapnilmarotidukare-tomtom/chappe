@@ -121,3 +121,70 @@ def test_mapped_milestone_is_ignored_with_a_warning(caplog: pytest.LogCaptureFix
 
 def test_readable() -> None:
     assert readable("prepare_data-v2") == "Prepare data v2"
+
+
+def test_bare_milestone_above_task() -> None:
+    with DAG("orders_pipeline", schedule=None) as dag:
+
+        @milestone
+        @task
+        def convert_data() -> None:
+            return None
+
+        convert_data()
+
+    spec = milestone_spec(dag.get_task("convert_data"))
+    assert spec is not None and spec.title is None
+    assert [s.title for s in build_structure(dag, process()).steps] == ["Convert data"]
+
+
+def test_default_section_falls_back_to_the_dag_id() -> None:
+    with DAG("orders_pipeline", schedule=None) as dag:
+        milestone(EmptyOperator(task_id="a"))
+    structure = build_structure(dag, process())
+    assert [(s.key, s.title) for s in structure.sections] == [
+        ("orders_pipeline", "Orders pipeline")
+    ]
+
+
+def test_title_falls_back_to_display_name_then_readable_task_id() -> None:
+    with DAG("orders_pipeline", schedule=None) as dag:
+        milestone(EmptyOperator(task_id="shown", task_display_name="Shown name"))
+        milestone(EmptyOperator(task_id="load_to_delta"))
+    assert [s.title for s in build_structure(dag, process()).steps] == [
+        "Shown name",
+        "Load to delta",
+    ]
+
+
+def test_milestone_on_something_unsupported_warns_and_returns_it(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    target = object()
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        assert milestone(target) is target
+    assert "cannot mark" in caplog.text
+
+
+def test_tuple_callbacks_are_extended() -> None:
+    def mine(context: object) -> None:
+        return None
+
+    with DAG("orders_pipeline", schedule=None):
+        op = EmptyOperator(task_id="t")
+    op.on_success_callback = (mine,)  # type: ignore[assignment]
+    milestone(op)
+    assert op.on_success_callback == [mine, callbacks.on_step_succeeded]
+
+
+def test_marking_failure_does_not_raise(caplog: pytest.LogCaptureFixture) -> None:
+    class Broken(EmptyOperator):
+        def __setattr__(self, name: str, value: object) -> None:
+            if name == "chappe_milestone":
+                raise RuntimeError("boom")
+            super().__setattr__(name, value)
+
+    with caplog.at_level(logging.WARNING, logger="chappe"), DAG("orders_pipeline", schedule=None):
+        op = Broken(task_id="t")
+        assert milestone(op) is op
+    assert "could not mark" in caplog.text
