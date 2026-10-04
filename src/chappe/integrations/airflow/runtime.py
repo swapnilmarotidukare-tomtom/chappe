@@ -62,7 +62,16 @@ class Runtime:
     def resolve(self, process: str | None, dag_id: str) -> tuple[str, ProcessConfig] | None:
         if process is not None:
             config = self.settings.processes.get(process)
-            return (process, config) if config is not None else None
+            if config is not None and any(ref.dag_id == dag_id for ref in config.dags):
+                return process, config
+            # Late over wrong (spec 4.2): never post one DAG's run to another process's channel.
+            problem = "does not list this DAG" if config is not None else "is not configured"
+            log.warning(
+                "chappe: ChappeNotifier(process=%r) %s; using the process of DAG %r instead",
+                process,
+                problem,
+                dag_id,
+            )
         return self.settings.process_for_dag(dag_id)
 
     def engine(self, name: str) -> Engine:

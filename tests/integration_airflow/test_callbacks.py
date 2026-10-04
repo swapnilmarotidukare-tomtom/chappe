@@ -204,8 +204,43 @@ def test_unconfigured_dag_is_ignored(engine: RecordingEngine) -> None:
     ctx = task_context()
     ctx["dag"] = orders_dag("other")
     callbacks.on_step_started(ctx)
-    ChappeNotifier(process="unknown").notify(dag_context("success", "success"))
+    final = dag_context("success", "success")
+    final["dag"] = orders_dag("other")
+    ChappeNotifier().notify(final)
+    ChappeNotifier(process="unknown").notify(final)  # warns, then no process for "other"
     assert engine.events == []
+
+
+TWO_PROCESSES = {
+    "processes": {
+        "orders": {"dags": [{"dag_id": "orders"}], "channel": "C0123456789"},
+        "billing": {"dags": [{"dag_id": "billing"}], "channel": "C0123456789"},
+    }
+}
+
+
+@pytest.mark.parametrize("process", ["typo", "billing"])
+def test_a_wrong_notifier_process_warns_and_uses_the_dags_own_process(
+    process: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An unknown process, or one that does not list this DAG: late over wrong (spec 4.2)."""
+    recording = RecordingEngine()
+    stub = StubRuntime(recording)
+    stub.settings = ChappeSettings.model_validate(TWO_PROCESSES)
+    set_runtime(stub)
+    try:
+        with caplog.at_level(logging.WARNING, logger="chappe"):
+            ChappeNotifier(process=process).notify(dag_context("success", "success"))
+    finally:
+        set_runtime(None)
+    (event,) = recording.events
+    assert (event.kind, event.process, event.process_state) == (
+        EventKind.RUN_FINISHED,
+        "orders",
+        ProcessState.SUCCEEDED,
+    )
+    (warning,) = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert repr(process) in warning.getMessage() and "'orders'" in warning.getMessage()
 
 
 @pytest.mark.parametrize(

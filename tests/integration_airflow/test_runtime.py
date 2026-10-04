@@ -50,7 +50,8 @@ def test_builds_one_engine_per_process(tmp_path: Path) -> None:
     runtime = Runtime(load_settings(write_config(tmp_path)), connections=connections)
     assert runtime.resolve(None, "orders") is not None
     assert runtime.resolve(None, "unknown") is None
-    assert runtime.resolve("unknown", "orders") is None
+    assert runtime.resolve("unknown", "orders") == runtime.resolve(None, "orders")  # warns
+    assert runtime.resolve("unknown", "other") is None
     engine = runtime.engine("orders")
     assert isinstance(engine, Engine) and runtime.engine("orders") is engine
     assert looked_up == ["chappe_slack"]
