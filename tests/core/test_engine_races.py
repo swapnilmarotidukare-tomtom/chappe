@@ -217,3 +217,101 @@ def test_replies_under_a_parent_that_lost_and_was_deleted_are_sent_again() -> No
     texts = [m.text for m in api.replies(CHANNEL, second)]
     for title in ("Extract", "Transform", "Load"):
         assert sum(f" {title}" in text for text in texts) == 1, texts
+
+
+class DuplicateDuringEdit(SlackTransport):
+    """Runs `meanwhile` once, just before its first parent edit."""
+
+    def __init__(self, api: FakeSlackApi, meanwhile: Callable[[], None]) -> None:
+        super().__init__(api, clock=lambda: 0.0)
+        self._meanwhile: Callable[[], None] | None = meanwhile
+
+    def update_parent(
+        self,
+        channel: str,
+        ts: str,
+        text: str,
+        metadata: Mapping[str, Any] | None,
+        *,
+        deadline: float,
+        still_current: Callable[[], bool] | None = None,
+    ) -> bool:
+        if self._meanwhile is not None:
+            meanwhile, self._meanwhile = self._meanwhile, None
+            meanwhile()
+        return super().update_parent(
+            channel, ts, text, metadata, deadline=deadline, still_current=still_current
+        )
+
+
+def test_the_final_write_follows_a_winner_that_changed_meanwhile() -> None:
+    """Re-review (flip.py): E posted P1. The final event B loaded P1, but before B's edit a
+    parallel first event D claimed P2 with a newer view, so P2 won and D set out to delete P1.
+    B must write to the stored winner P2, never to the stale P1: otherwise P1 wins again, B's
+    result goes under it, D's late delete removes it and P2 keeps "In progress" forever."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    shared = store_for(variables)
+    writer(api, variables).handle(stage(R, P, P))
+    (first,) = api.top_level(CHANNEL)
+    d_view = stage(S, R, P)
+    stale_for_d: list[str] = []
+
+    def parallel_claim() -> None:
+        text = render(d_view).parent.text
+        second = api.post(CHANNEL, text)
+        wm = d_view.watermark
+        claim = SentState(
+            KEY,
+            parent_ref=second,
+            parent_text=text,
+            watermark=wm,
+            parent_written=wm,
+            parent_wms={second: wm},
+        )
+        stale_for_d.extend(shared.save(KEY, claim).stale_parents)
+
+    final = stage(S, S, F, finished=ProcessState.FAILED)
+    b = writer(api, variables, transport=DuplicateDuringEdit(api, parallel_claim))
+    assert b.handle(final, EventKind.RUN_FINISHED) is HandleResult.SENT
+    assert stale_for_d == [first.ts]
+    for ts in stale_for_d:  # D's delete, decided on its claim's state, lands late
+        api.delete(CHANNEL, ts)
+        shared.save(KEY, SentState(KEY, cleared_parents=frozenset({ts})))
+    writer(api, variables).handle(stage(S, S, F))  # a late non-final event changes nothing
+
+    expected = render(final)
+    (parent,) = api.top_level(CHANNEL)
+    assert parent.text == expected.parent.text
+    assert [m.text for m in api.replies(CHANNEL, parent.ts)] == [
+        *(e.text for e in expected.thread),
+        *(a.text for a in expected.alerts),
+    ]
+    saved = shared.load(KEY)
+    assert saved is not None and saved.parent_ref == parent.ts and saved.watermark is not None
+    assert saved.watermark.finished
+
+
+def test_a_stale_parent_that_won_again_meanwhile_is_not_deleted() -> None:
+    """The delete of a losing parent is decided on a loaded state; right before it, the store
+    is read again, and a parent that is now the winner is kept."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    shared = store_for(variables)
+    writer(api, variables).handle(stage(R, P, P))
+    (first,) = api.top_level(CHANNEL)
+    second = api.post(CHANNEL, "duplicate parent")
+    shared.save(
+        KEY, SentState(KEY, parent_ref=second, parent_wms={second: stage(S, R, P).watermark})
+    )
+    reads: list[int] = []
+
+    def first_wins_again() -> None:
+        reads.append(1)
+        if len(reads) == 2:  # after the event's load, before its delete of the first parent
+            newer = stage(S, S, R).watermark
+            shared.save(KEY, SentState(KEY, parent_ref=first.ts, parent_wms={first.ts: newer}))
+
+    w = writer(api, variables, before_read=first_wins_again)
+    w.handle(stage(S, S, S))
+    assert api.message(CHANNEL, first.ts) is not None
+    saved = shared.load(KEY)
+    assert saved is not None and first.ts not in saved.cleared_parents

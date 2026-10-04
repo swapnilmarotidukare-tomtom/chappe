@@ -395,18 +395,30 @@ class Engine:
             )
 
     def _write_parent(
-        self, key: str, ts: str, text: str, wm: Watermark, deadline: float
+        self, key: str, ts: str, text: str, wm: Watermark, deadline: float, retargets: int = 0
     ) -> SentState | None:
         """Edit the parent `ts`. Returns None when a newer render owns the parent: stored before
         any attempt (an attempt never overwrites a newer render, spec 7.1), or on a re-posted
-        parent."""
+        parent.
+
+        Only the stored winner is ever written. Writing a losing parent would raise its rank and
+        let it win again (D2), while a parallel event may already be deleting it. When the winner
+        changed since `ts` was chosen, the write moves to the new winner (at most twice, then this
+        event yields).
+        """
         payload = parent_payload(key, wm)
+        moved: list[str] = []
 
         def still_current() -> bool:
             stored = self._load(key, deadline)
-            return stored is None or not (
-                stored.watermark is not None and stored.watermark.newer_than(wm)
-            )
+            if stored is None:
+                return True
+            if stored.watermark is not None and stored.watermark.newer_than(wm):
+                return False
+            if stored.parent_ref is not None and stored.parent_ref != ts:
+                moved[:] = [stored.parent_ref]
+                return False
+            return True
 
         try:
             written = self._transport.update_parent(
@@ -431,10 +443,13 @@ class Engine:
                 current = self._save(key, SentState(key, cleared_parents=frozenset({ts})), deadline)
             if current.parent_ref is None:
                 return self._post_parent(key, text, wm, deadline)
-            # a lower-ts parent won meanwhile and ours was deleted, or a duplicate took over
-            return self._write_parent(key, current.parent_ref, text, wm, deadline)
+            # another parent won meanwhile and ours was deleted, or a duplicate took over
+            return self._write_parent(key, current.parent_ref, text, wm, deadline, retargets)
+        if not written and moved and retargets < 2:
+            log.info("chappe: the parent of %s is now %s; writing there", key, moved[0])
+            return self._write_parent(key, moved[0], text, wm, deadline, retargets + 1)
         if not written:
-            log.info("chappe: a newer render of %s was stored; not editing the parent", key)
+            log.info("chappe: a newer render of %s owns the parent; not editing it", key)
             return None
         return self._record(
             key,
@@ -454,6 +469,9 @@ class Engine:
             return state
         cleared: set[str] = set()
         for ts in sorted(state.stale_parents, key=slack_ts_key):
+            current = self._load(key, deadline)  # the winner may have changed since `state`
+            if current is not None and current.parent_ref == ts:
+                continue
             try:
                 self._transport.delete(self._settings.channel, ts, deadline=deadline)
             except TransportError as exc:
