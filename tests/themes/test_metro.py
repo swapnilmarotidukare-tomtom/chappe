@@ -195,3 +195,38 @@ def test_alert_with_a_timed_failure_says_how_long_and_without_failed_steps_says_
 
 def test_no_alert_unless_failed() -> None:
     assert MetroTheme().render(SAMPLES["single_passed"], default_context("metro")).alerts == ()
+
+
+def test_a_title_cannot_close_the_fence_or_break_the_line() -> None:
+    view = ProcessViewBuilder().section("Main").step("a```b\nc", R).build()
+    text = parent(view)
+    assert text.split("\n").count(FENCE) == 2
+    (line,) = block(text)
+    assert line.startswith("◉  a'''b c")
+
+
+def test_a_section_title_cannot_close_the_fence_or_break_the_line() -> None:
+    view = (
+        ProcessViewBuilder()
+        .section("Main")
+        .step("One", S, 1)
+        .section("Br```x\ny")
+        .step("Two", R)
+        .build()
+    )
+    text = parent(view)
+    assert text.split("\n").count(FENCE) == 2
+    assert "┗━ Br'''x y" in block(text)
+
+
+def test_when_no_block_fits_the_link_is_kept_whole() -> None:
+    text = parent(four_steps().build(), limit=120)
+    assert FENCE not in text
+    assert text.endswith("<https://airflow.invalid/dags/orders/runs/run_1|Airflow run>")
+    assert len(text) <= 120
+
+
+def test_token_overrides_reach_the_stations() -> None:
+    ctx = default_context("metro", {"extra": {"glyph_running": "*", "running": "läuft"}})
+    lines = block(MetroTheme().render(four_steps().build(), ctx).parent.text)
+    assert lines[2] == "*  Transform" + " " * 16 + "läuft 5m"

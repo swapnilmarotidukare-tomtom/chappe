@@ -28,6 +28,11 @@ _GLYPHS = {
 }
 
 
+def _inline(text: str) -> str:
+    """One line, no backticks: a name in the code block can't break a line or close the fence."""
+    return " ".join(text.split()).replace("`", "'")
+
+
 def _fit(text: str, room: int) -> str:
     room = max(room, 1)
     return text if len(text) <= room else text[: room - 1] + "…"
@@ -58,7 +63,12 @@ class MetroTheme:
             text = "\n".join([*head, FENCE, *self._stations(view, ctx, cap), FENCE, *tail])
             if len(text) <= limit:
                 return text
-        return clip("\n".join([*head, *tail]), limit)  # no block fits: never an unclosed fence
+        # no block fits: never an unclosed fence, never a cut link
+        links_line = "\n".join(tail)
+        if len(links_line) >= limit:
+            return clip("\n".join(head), limit)
+        room = limit - len(links_line) - (1 if links_line else 0)
+        return "\n".join([clip("\n".join(head), room), *tail])
 
     def _status(self, view: ProcessView, ctx: RenderContext) -> str:
         line = f"{ctx.icon(view.state)} {ctx.label(view.state)}"
@@ -96,7 +106,7 @@ class MetroTheme:
 
     def _branch_head(self, section: SectionView, ctx: RenderContext, *, last: bool) -> str:
         mark = BRANCH_LAST if last else BRANCH
-        return mark + ctx.text(_fit(section.title, LINE_WIDTH - len(mark)))
+        return mark + ctx.text(_fit(_inline(section.title), LINE_WIDTH - len(mark)))
 
     def _item(self, item: StepView | int, view: ProcessView, ctx: RenderContext, width: int) -> str:
         if isinstance(item, int):
@@ -113,7 +123,7 @@ class MetroTheme:
         right = self._right(step, view, ctx)
         prefix = f"{glyph}  "
         room = width - len(prefix) - (len(right) + 1 if right else 0)
-        name = _fit(step.title, room)
+        name = _fit(_inline(step.title), room)
         if not right:
             return prefix + ctx.text(name)
         padding = " " * (width - len(prefix) - len(name) - len(right))
