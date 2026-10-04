@@ -53,9 +53,24 @@ def test_blocked_attempt_fails_the_test_even_if_the_error_is_swallowed(
     network_attempts.clear()
 
 
-def test_getaddrinfo_allows_wildcard_hosts() -> None:
-    assert socket.getaddrinfo(None, 80)
-    assert socket.getaddrinfo("", 80)
+@pytest.mark.parametrize("host", [None, ""])
+def test_getaddrinfo_passes_wildcard_hosts_to_the_resolver(
+    host: str | None, monkeypatch: pytest.MonkeyPatch, network_attempts: list[str]
+) -> None:
+    """The guard forwards a wildcard host unrecorded; what the OS resolver answers is its own
+    business (glibc rejects "" with EAI_NONAME, macOS resolves it), so the C-level call is
+    replaced by one that answers like glibc and never touches the network."""
+    seen: list[str | None] = []
+
+    def glibc_resolver(node: str | None, *args: object) -> list[object]:
+        seen.append(node)
+        raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+
+    monkeypatch.setattr(socket._socket, "getaddrinfo", glibc_resolver)  # type: ignore[attr-defined]
+    with contextlib.suppress(socket.gaierror):
+        socket.getaddrinfo(host, 80)
+    assert seen == [host]
+    assert network_attempts == []
 
 
 def test_ipv6_loopback_connection_is_allowed() -> None:
