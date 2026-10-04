@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
@@ -34,6 +35,9 @@ STATE_MAP: dict[str, StepState] = {
     "removed": StepState.SKIPPED,
 }
 _TEMPLATES = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
+_warned_templates: set[str] = set()  # one warning per template per process
+
+log = logging.getLogger("chappe")
 
 
 def process_key(dag_id: str, run_id: str) -> str:
@@ -51,7 +55,16 @@ def render_title(template: str, *, params: Mapping[str, Any], dag_id: str, run_i
             .render(params=params, dag_id=dag_id, run_id=run_id)
             .strip()
         )
-    except Exception:
+    except Exception as exc:
+        if template not in _warned_templates:
+            _warned_templates.add(template)
+            log.warning(
+                "chappe: title template %r failed (%s: %s); titles fall back to %r",
+                template,
+                type(exc).__name__,
+                exc,
+                "<dag_id> · <run_id>",
+            )
         text = ""
     return text or f"{dag_id} · {run_id}"
 

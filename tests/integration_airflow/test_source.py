@@ -1,14 +1,17 @@
 # tests/integration_airflow/test_source.py
+import logging
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import pytest
 from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.sdk import DAG, TaskGroup
 
 from chappe.config.models import ProcessConfig
 from chappe.core.events import ChappeEvent, EventKind
 from chappe.core.model import ProcessState, StepState
+from chappe.integrations.airflow import source as source_module
 from chappe.integrations.airflow.decorators import milestone
 from chappe.integrations.airflow.source import AirflowSource, map_state, process_key, render_title
 
@@ -217,3 +220,22 @@ def test_naive_payload_times_are_read_as_utc() -> None:
     assert view is not None
     assert view.started_at == T0 and view.started_at.tzinfo is not None
     assert view.steps[0].ended_at == datetime(2026, 10, 2, 8, 6, tzinfo=timezone.utc)
+
+
+def test_a_failing_title_template_warns_once_per_template(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(source_module, "_warned_templates", set())
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        for _ in range(3):
+            assert (
+                render_title("{{ params.version }}", params={}, dag_id="orders", run_id=RUN)
+                == f"orders · {RUN}"
+            )
+        assert render_title("{{ broken", params={}, dag_id="orders", run_id=RUN) == (
+            f"orders · {RUN}"
+        )
+        assert render_title("{{ dag_id }}", params={}, dag_id="orders", run_id=RUN) == "orders"
+    first, second = [r.getMessage() for r in caplog.records]
+    assert "'{{ params.version }}'" in first and "has no attribute 'version'" in first
+    assert "'{{ broken'" in second
