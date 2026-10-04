@@ -116,9 +116,9 @@ def run(module: ModuleType, api: FakeSlackApi, conf: dict[str, Any], reason: str
     assert "Passed" not in parent.text and "Failed" not in parent.text
     assert api.replies(CHANNEL, parent.ts) == []
     # The DAG callback, as the DAG processor sends it (minimal context, finding 5). On Airflow
-    # 3.2.2, dag.test()'s own DAG callback fails before notify() (BaseNotifier renders templates
-    # against a SerializedDAG), so the "exactly one final reply" checks below do not exercise
-    # the dedup of a second final event.
+    # 3.2.2, dag.test()'s own DAG callback passes a SerializedDAG whose tasks carry no milestone
+    # marker, so it sends nothing; the "exactly one final reply" checks below therefore do not
+    # exercise the dedup of a second final event.
     ChappeNotifier().notify({"dag": module.dag, "run_id": dag_run.run_id, "reason": reason})
     return str(dag_run.run_id)
 

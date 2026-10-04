@@ -44,6 +44,8 @@ unset CHAPPE_SLACK_TOKEN
 
 ## 4. Scenarios
 
+Use `airflow dags trigger`, not `dag.test()`: under `dag.test()` the task updates post, but no final message is sent.
+
 Check each scenario in the test channel. After every run, also check:
 
 - The DAG-processor log (the `airflow standalone` console, or `$AIRFLOW_HOME/logs/dag_processor/…`) shows "Executing on_success dag callback" or "Executing on_failure dag callback", and none of "chappe: notifier failed", `get_template_env`, "Unable to decode message".

@@ -35,6 +35,10 @@ class ChappeNotifier(BaseNotifier):
         super().__init__()
         self.process = process
 
+    def render_template_fields(self, context: Any, jinja_env: Any = None) -> None:
+        """No templates (template_fields is empty). The base class asks the DAG for a Jinja env,
+        which a SerializedDAG under dag.test() lacks, and would log an error every run."""
+
     def __call__(self, *args: Any) -> None:
         # BaseNotifier renders templates before notify() and re-raises; nothing may reach Airflow
         try:

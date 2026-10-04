@@ -285,3 +285,16 @@ def test_the_kill_switch_returns_before_building_the_engine(
         set_runtime(None)
     assert looked_up == []
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_the_notifier_renders_no_templates(
+    engine: RecordingEngine, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Under dag.test() the DAG is a SerializedDAG without get_template_env (Airflow 3.2.2)."""
+    ctx = dag_context("success", "success")
+    ctx["dag"] = SimpleNamespace(dag_id="orders", task_dict={}, task_group=None)
+    with caplog.at_level(logging.DEBUG):
+        ChappeNotifier()(ctx)  # how Airflow calls it
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    (event,) = engine.events
+    assert (event.kind, event.process_state) == (EventKind.RUN_FINISHED, ProcessState.SUCCEEDED)
