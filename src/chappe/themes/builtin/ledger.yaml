@@ -7,7 +7,7 @@ icons:
 labels:
   pending: "Waiting"
   running: "In progress"
-  succeeded: "Passed"
+  succeeded: "Completed"
   failed: "Failed"
   skipped: "Skipped"
 extra:
@@ -22,7 +22,8 @@ extra:
   after: "after"
   of: "of"
   done: "done"
-  passed: "passed"
+  passed: "completed"
   failed: "failed"
   skipped: "skipped"
   not_run: "not run"
+  more: "more"

@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-- New default theme `ledger`: a status header that links to the run, one line per step (running steps show when they started), a single line for a passed run and only the failing sections for a failed one. Each step's start and end, with a failed step's error, go into the thread; one alert names the failed steps. `theme.collapse_done_sections: true` folds finished sections into one line.
+- New default theme `ledger`: a status header that links to the run, one line per step (running steps show when they started), "Completed in …" with every step listed when a run completes, and only the failing sections for a failed one. Each step's start and end, with a failed step's error, go into the thread as plain replies without times or icons; one alert names the failed steps. `theme.collapse_done_sections: true` folds finished sections into one line.
 - New theme `metro`: one message per run with a status line and the run drawn as a line of stations, with the run's total time on the status line. Only a failure alert goes into the thread; a passing run is exactly one channel message.
-- **Breaking:** the `thread` theme is removed. A config that names it (`theme: {name: thread}` or `tokens.extends: thread`) no longer loads: remove the line (metro is the default) or name `metro`.
+- **Breaking:** the `thread` theme is removed. A config that names it (`theme: {name: thread}` or `tokens.extends: thread`) no longer loads: remove the line (`ledger` is the default) or name `ledger` or `metro`.
 - `scripts/dev-airflow.sh`: set up, start and stop a local Airflow for real-Slack testing, with the token in a file outside the repo (`~/.config/chappe/dev.env`).
 - The example is now one flat DAG with four steps: Extract → Transform → Load → Report.
 

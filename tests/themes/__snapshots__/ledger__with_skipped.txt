@@ -1,7 +1,10 @@
 === parent ===
-:large_green_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · Passed in 1h 33m · started 08:05
+:large_green_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · Completed in 1h 33m · started 08:05
+:white_check_mark: Parquet → Delta
+:fast_forward: Backfill · Skipped
+:white_check_mark: Aggregates
 === thread ===
-[step:main.parquet_delta:succeeded] :white_check_mark: *Parquet → Delta* · Passed
-[step:main.backfill:skipped] :fast_forward: *Backfill* · Skipped
-[step:main.aggregates:succeeded] :white_check_mark: *Aggregates* · Passed
+[step:main.parquet_delta:succeeded] *Parquet → Delta* · Completed
+[step:main.backfill:skipped] *Backfill* · Skipped
+[step:main.aggregates:succeeded] *Aggregates* · Completed
 === alerts ===

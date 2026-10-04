@@ -1,6 +1,16 @@
 chappe:
   defaults:
     store: {type: airflow_variable}
+    # The default ledger icons are standard emoji. These five custom emoji must be uploaded to your
+    # Slack workspace first (Workspace settings → Customize → Emoji); otherwise delete this block.
+    theme:
+      tokens:
+        icons:
+          succeeded: ":chappe-done:"
+          running: ":chappe-running:"
+          pending: ":chappe-pending:"
+          skipped: ":chappe-skipped:"
+          failed: ":chappe-failed:"
     ui_base_url: http://localhost:8080
   processes:
     example:

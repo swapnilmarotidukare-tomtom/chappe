@@ -1,12 +1,12 @@
 === parent ===
 :red_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · Failed after 3h 34m · started 08:05
-1 passed · 1 failed · 1 not run
+1 completed · 1 failed · 1 not run
 :white_check_mark: Parquet → Delta
 :x: Geometry · Failed
 :white_circle: Aggregates
 === thread ===
-[step:main.parquet_delta:succeeded] :white_check_mark: *Parquet → Delta* · Passed
-[step:main.geometry:failed] :x: *Geometry* · Failed
+[step:main.parquet_delta:succeeded] *Parquet → Delta* · Completed
+[step:main.geometry:failed] *Geometry* · Failed
 Executor ran out of memory after 3 retries
 === alerts ===
 [alert:process:failed] <!subteam^S0TEST> :red_circle: *orders 2026.10.1* · Geometry: Executor ran out of memory after 3 retries · <https://airflow.invalid/dags/orders/runs/run_1/tasks/geometry|Log>

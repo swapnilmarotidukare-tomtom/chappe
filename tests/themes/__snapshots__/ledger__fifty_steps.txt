@@ -56,5 +56,5 @@
 :white_circle: Step 5.9
 :white_circle: Step 5.10
 === thread ===
-[step:section_3.step_3_1:started] :hourglass_flowing_sand: *Step 3.1* · started 09:45
+[step:section_3.step_3_1:started] *Step 3.1* · started
 === alerts ===

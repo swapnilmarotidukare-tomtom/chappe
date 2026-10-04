@@ -206,3 +206,15 @@ def test_the_secrets_cache_off_or_unreadable_keeps_chappe_running(
     with caplog.at_level(logging.WARNING, logger="chappe"):
         assert runtime_module.get_runtime() is not None  # Airflow's own cache reads it the same way
     assert "could not read [secrets] use_cache" in caplog.text
+
+
+def test_the_collapse_option_reaches_the_theme(tmp_path: Path) -> None:
+    text = CONFIG.replace(
+        "    ui_base_url: http://airflow.invalid:8080\n",
+        "    ui_base_url: http://airflow.invalid:8080\n    theme: {collapse_done_sections: true}\n",
+    )
+    runtime = Runtime(
+        load_settings(write_config(tmp_path, text)),
+        connections=lambda _: ConnectionInfo(password="xoxb-test"),
+    )
+    assert runtime.engine("orders")._ctx.collapse_done_sections is True  # test seam

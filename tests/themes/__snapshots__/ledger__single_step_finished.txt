@@ -4,6 +4,6 @@
 :white_check_mark: Geometry · 4h 21m
 :white_circle: Aggregates
 === thread ===
-[step:main.geometry:started] :hourglass_flowing_sand: *Geometry* · started 09:23
-[step:main.geometry:succeeded] :white_check_mark: *Geometry* · Passed 13:44 · 4h 21m
+[step:main.geometry:started] *Geometry* · started
+[step:main.geometry:succeeded] *Geometry* · Completed · 4h 21m
 === alerts ===

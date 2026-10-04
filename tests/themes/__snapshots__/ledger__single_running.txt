@@ -4,5 +4,5 @@
 :hourglass_flowing_sand: Geometry · running since 09:23
 :white_circle: Aggregates
 === thread ===
-[step:main.geometry:started] :hourglass_flowing_sand: *Geometry* · started 09:23
+[step:main.geometry:started] *Geometry* · started
 === alerts ===

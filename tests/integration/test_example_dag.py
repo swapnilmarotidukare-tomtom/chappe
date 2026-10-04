@@ -147,7 +147,7 @@ def test_the_example_is_one_flat_dag_of_four_milestones() -> None:
     ]
 
 
-def test_passing_run_is_one_line_with_each_steps_start_and_end_in_the_thread(
+def test_passing_run_lists_every_step_with_each_start_and_end_in_the_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = load_example()
@@ -158,19 +158,19 @@ def test_passing_run_is_one_line_with_each_steps_start_and_end_in_the_thread(
     # a known limit: README.md, "Known limits of 0.0.1" (DAG callback without dag_run or params)
     # the notifier's minimal DAG-callback context carries no params and no run times, so the
     # title falls back to "<dag_id> · <run_id>" and the header has no duration or "started" part
-    assert parent.text.startswith(
-        ":large_green_circle: *<http://localhost:8080/dags/chappe_example/"
-    )
-    assert "|chappe_example · " in parent.text and parent.text.endswith(">* · Passed")
-    assert "\n" not in parent.text  # a passed run is exactly one line
+    lines = parent.text.split("\n")
+    assert lines[0].startswith(":large_green_circle: *<http://localhost:8080/dags/chappe_example/")
+    assert "|chappe_example · " in lines[0] and lines[0].endswith(">* · Completed")
+    # the example config uses the custom :chappe-*: icons for steps
+    assert lines[1:] == [f":chappe-done: {name}" for name in STEPS]
     replies = [m.text for m in api.replies(CHANNEL, parent.ts)]
     assert not any(m.broadcast for m in api.replies(CHANNEL, parent.ts))
     steps = replies_by_step(replies)
     assert sorted(steps) == sorted(STEPS)
     for name in STEPS:
         started, ended = steps[name]
-        assert started.startswith("started "), (name, started)
-        assert ended.startswith("Passed "), (name, ended)
+        assert started == "started", (name, started)
+        assert ended.startswith("Completed"), (name, ended)
     assert_kept(store, run_id, parent.ts)
 
 
@@ -189,18 +189,18 @@ def test_failing_run_lists_the_failing_steps_and_alerts_once(
     assert lines[0].startswith(":red_circle: *<") and lines[0].endswith(">* · Failed")
     # upstream_failed maps to StepState.FAILED (integrations/airflow/source.py)
     assert lines[1:] == [
-        "2 passed · 2 failed",
-        ":white_check_mark: Extract",
-        ":white_check_mark: Transform",
-        ":x: Load · Failed",
-        ":x: Report · Failed",
+        "2 completed · 2 failed",
+        ":chappe-done: Extract",
+        ":chappe-done: Transform",
+        ":chappe-failed: Load · Failed",
+        ":chappe-failed: Report · Failed",
     ]
     replies = [m.text for m in api.replies(CHANNEL, parent.ts)]
     (alert,) = [text for text in replies if text.startswith("<@U0123456789>")]
     assert alert.startswith("<@U0123456789> :red_circle: *chappe_example · ")
     assert "* · Load" in alert and "Report: An upstream task failed" in alert
     steps = replies_by_step(replies)
-    assert steps["Load"][0].startswith("started ")
+    assert steps["Load"][0] == "started"
     assert steps["Load"][-1].startswith("Failed ")
     assert steps["Report"] == ["Failed\nAn upstream task failed"]  # never started: end only
     assert_kept(store, run_id, parent.ts)

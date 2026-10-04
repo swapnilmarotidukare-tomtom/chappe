@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 from chappe.core.model import ProcessState, StepState
+from chappe.core.render import Limits
 from chappe.core.view import ProcessView
 from chappe.themes import THEMES
 from chappe.themes.builtin.ledger import LedgerTheme
@@ -71,17 +72,20 @@ def test_collapse_shows_the_span_only_when_every_step_is_timed() -> None:
     assert parent(view, collapse=True)[1] == "*Prepare* · 2 of 2 done · 30m"
 
 
-def test_passed_run_is_exactly_one_line() -> None:
+def test_completed_run_lists_every_step() -> None:
     # 78 + 261 + 10 min of steps, then 5 min: ended 13:59
     assert parent(SAMPLES["single_passed"]) == [
-        f":large_green_circle: *{LINK}* · Passed in 5h 54m · started 08:05"
+        f":large_green_circle: *{LINK}* · Completed in 5h 54m · started 08:05",
+        ":white_check_mark: Parquet → Delta",
+        ":white_check_mark: Geometry",
+        ":white_check_mark: Aggregates",
     ]
 
 
 def test_failed_single_section_shows_counts_without_a_title() -> None:
     assert parent(SAMPLES["single_failed"]) == [
         f":red_circle: *{LINK}* · Failed after 3h 34m · started 08:05",
-        "1 passed · 1 failed · 1 not run",
+        "1 completed · 1 failed · 1 not run",
         ":white_check_mark: Parquet → Delta",
         ":x: Geometry · Failed",
         ":white_circle: Aggregates",
@@ -91,7 +95,7 @@ def test_failed_single_section_shows_counts_without_a_title() -> None:
 def test_failed_multi_section_lists_only_the_failing_section() -> None:
     lines = parent(SAMPLES["multi_failed"])
     assert lines[1:] == [
-        f"*{SECOND}* · 1 passed · 1 failed",
+        f"*{SECOND}* · 1 completed · 1 failed",
         ":white_check_mark: ID stability",
         ":x: Regression · Failed",
     ]
@@ -103,7 +107,7 @@ def test_pending_says_waiting_without_a_duration() -> None:
 
 def test_title_without_a_link_is_plain_bold() -> None:
     view = replace(SAMPLES["single_passed"], links=())
-    assert parent(view)[0].startswith(":large_green_circle: *orders 2026.10.1* · Passed in ")
+    assert parent(view)[0].startswith(":large_green_circle: *orders 2026.10.1* · Completed in ")
 
 
 def test_an_empty_header_token_leaves_no_mark() -> None:
@@ -115,8 +119,8 @@ def test_an_empty_header_token_leaves_no_mark() -> None:
 def test_thread_gets_a_start_and_an_end_reply_from_the_steps_own_times() -> None:
     entries = render(SAMPLES["single_step_finished"]).thread
     assert [(e.key, e.text) for e in entries] == [
-        ("step:main.geometry:started", ":hourglass_flowing_sand: *Geometry* · started 09:23"),
-        ("step:main.geometry:succeeded", ":white_check_mark: *Geometry* · Passed 13:44 · 4h 21m"),
+        ("step:main.geometry:started", "*Geometry* · started"),
+        ("step:main.geometry:succeeded", "*Geometry* · Completed · 4h 21m"),
     ]
     assert not any(e.broadcast for e in entries)
 
@@ -129,10 +133,10 @@ def test_a_running_step_gets_only_its_start_reply() -> None:
 def test_a_finished_run_gives_every_finished_step_an_end_reply_untimed() -> None:
     entries = render(SAMPLES["single_failed"]).thread
     assert [(e.key, e.text) for e in entries] == [
-        ("step:main.parquet_delta:succeeded", ":white_check_mark: *Parquet → Delta* · Passed"),
+        ("step:main.parquet_delta:succeeded", "*Parquet → Delta* · Completed"),
         (
             "step:main.geometry:failed",
-            ":x: *Geometry* · Failed\nExecutor ran out of memory after 3 retries",
+            "*Geometry* · Failed\nExecutor ran out of memory after 3 retries",
         ),
     ]
 
@@ -159,3 +163,89 @@ def test_no_alert_unless_failed() -> None:
 def test_names_are_escaped() -> None:
     view = ProcessViewBuilder().section("Main").step("A & <b>", R).build()
     assert parent(view)[1] == ":hourglass_flowing_sand: A &amp; &lt;b&gt; · running since 08:05"
+
+
+def test_a_failed_step_with_its_own_times_gets_its_duration_and_error_in_the_thread() -> None:
+    view = (
+        ProcessViewBuilder().section("Main").step("Load", F, 2, error="ValueError: bad row").build()
+    )
+    (start, end) = render(view).thread
+    assert start.text == "*Load* · started"
+    assert end.key == "step:main.load:failed"
+    assert end.text == "*Load* · Failed · 2m\nValueError: bad row"
+
+
+def test_a_skipped_step_gets_its_end_reply_only_once_the_run_finished() -> None:
+    running = ProcessViewBuilder().section("Main").step("Backfill", StepState.SKIPPED, 0).build()
+    assert [e.key for e in render(running).thread] == ["step:main.backfill:started"]
+    done = (
+        ProcessViewBuilder()
+        .section("Main")
+        .step("Backfill", StepState.SKIPPED, 0)
+        .finished(ProcessState.SUCCEEDED)
+        .build()
+    )
+    assert "step:main.backfill:skipped" in [e.key for e in render(done).thread]
+
+
+def test_replies_follow_the_steps_own_times() -> None:
+    view = (
+        ProcessViewBuilder()
+        .section("Main")
+        .step("Extract", S, 2)
+        .step("Transform", S, 3)
+        .step("Load", R)
+        .build()
+    )
+    assert [e.key for e in render(view).thread] == [
+        "step:main.extract:started",
+        "step:main.extract:succeeded",
+        "step:main.transform:started",
+        "step:main.transform:succeeded",
+        "step:main.load:started",
+    ]
+
+
+def test_a_single_section_never_collapses() -> None:
+    assert parent(SAMPLES["single_passed"], collapse=True)[1:] == [
+        ":white_check_mark: Parquet → Delta",
+        ":white_check_mark: Geometry",
+        ":white_check_mark: Aggregates",
+    ]
+
+
+def test_a_failed_section_stays_listed_when_collapsing() -> None:
+    assert parent(SAMPLES["multi_failed"], collapse=True)[1:] == parent(SAMPLES["multi_failed"])[1:]
+
+
+def test_a_long_run_keeps_the_failed_step_and_says_how_many_are_hidden() -> None:
+    builder = ProcessViewBuilder().section("Main")
+    for index in range(1, 201):
+        state = F if index == 150 else (S if index < 150 else P)
+        builder.step(f"Step number {index}", state, 1, timed=False)
+    text = render(builder.finished(ProcessState.FAILED).build()).parent.text
+    assert len(text) <= Limits().parent_chars
+    assert ":x: Step number 150 · Failed" in text.split("\n")
+    assert any(line.startswith("… ") and line.endswith(" more") for line in text.split("\n"))
+
+
+def test_a_long_title_keeps_its_link_whole() -> None:
+    view = replace(SAMPLES["single_running"], title="x" * 5000)
+    header = render(view).parent.text.split("\n")[0]
+    assert header.count("<https://") == 1 and ">* · In progress" in header
+
+
+def test_a_long_alert_names_whole_steps_only() -> None:
+    builder = ProcessViewBuilder().section("Main")
+    for index in range(1, 31):
+        builder.step(f"Step {index}", F, 1, error="e" * 120, timed=False)
+    (alert,) = render(builder.finished(ProcessState.FAILED).build()).alerts
+    assert len(alert.text) <= Limits().entry_chars
+    assert alert.text.count("<https://") == alert.text.count("|Log>")
+    assert " more · <" in alert.text
+
+
+def test_an_empty_failed_mark_leaves_no_double_space_in_the_alert() -> None:
+    ctx = default_context("ledger", {"extra": {"header_failed": ""}})
+    (alert,) = LedgerTheme().render(SAMPLES["single_failed"], ctx).alerts
+    assert alert.text.startswith(f"{TEST_MENTION} *orders 2026.10.1* · Geometry")

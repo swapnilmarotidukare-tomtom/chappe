@@ -1,9 +1,16 @@
 === parent ===
-:large_green_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · Passed in 10h 11m · started 08:05
+:large_green_circle: *<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>* · Completed in 10h 11m · started 08:05
+*Prepare* · 3 of 3 done
+:white_check_mark: Parquet → Delta
+:white_check_mark: Geometry
+:white_check_mark: Aggregates
+*Regression vs baseline 2026.10.0* · 2 of 2 done
+:white_check_mark: ID stability
+:white_check_mark: Regression
 === thread ===
-[step:prepare.parquet_delta:succeeded] :white_check_mark: *Parquet → Delta* · Passed
-[step:prepare.geometry:succeeded] :white_check_mark: *Geometry* · Passed
-[step:prepare.aggregates:succeeded] :white_check_mark: *Aggregates* · Passed
-[step:regression_vs_baseline_2026_10_0.id_stability:succeeded] :white_check_mark: *ID stability* · Passed
-[step:regression_vs_baseline_2026_10_0.regression:succeeded] :white_check_mark: *Regression* · Passed
+[step:prepare.parquet_delta:succeeded] *Parquet → Delta* · Completed
+[step:prepare.geometry:succeeded] *Geometry* · Completed
+[step:prepare.aggregates:succeeded] *Aggregates* · Completed
+[step:regression_vs_baseline_2026_10_0.id_stability:succeeded] *ID stability* · Completed
+[step:regression_vs_baseline_2026_10_0.regression:succeeded] *Regression* · Completed
 === alerts ===
