@@ -1,7 +1,6 @@
 chappe:
   defaults:
     store: {type: airflow_variable}
-    theme: {name: thread}   # the default; "plain" is the flat fallback
     ui_base_url: http://localhost:8080
   processes:
     example:
