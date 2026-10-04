@@ -1,0 +1,11 @@
+chappe:
+  defaults:
+    store: {type: airflow_variable}
+    theme: {name: plain}
+    ui_base_url: http://localhost:8080
+  processes:
+    example:
+      dags: [{dag_id: chappe_example}]
+      channel: C0123456789   # replace with your test channel ID (C… or G…, not #name)
+      title: "{{ params.product }} {{ params.version }}"
+      alerts: {mention: "<@U0123456789>"}   # replace with you or a user group

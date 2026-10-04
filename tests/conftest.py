@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import shutil
 import socket
+import sys
+import tempfile
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -17,8 +20,32 @@ if os.environ.get("HYPOTHESIS_PROFILE"):
 elif os.environ.get("CI"):
     settings.load_profile("ci")
 
+_AIRFLOW_HOME = pytest.StashKey[str]()
+
 # Rich assertion diffs inside the helpers in tests/support.
 pytest.register_assert_rewrite("tests.support")
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Point Airflow at a throwaway home before anything imports it.
+
+    Airflow reads AIRFLOW_HOME (and builds its DB engine) at import time, so a fixture would be
+    too late: without this, tests would use ~/airflow.
+    """
+    if "airflow" in sys.modules:
+        raise pytest.UsageError("airflow was imported before tests/conftest.py could isolate it")
+    home = tempfile.mkdtemp(prefix="chappe-airflow-home-")
+    config.stash[_AIRFLOW_HOME] = home
+    os.environ["AIRFLOW_HOME"] = home
+    os.environ["AIRFLOW__DATABASE__SQL_ALCHEMY_CONN"] = f"sqlite:///{home}/airflow.db"
+    os.environ["AIRFLOW__CORE__DAGS_FOLDER"] = os.path.join(home, "dags")
+    os.environ["AIRFLOW__CORE__LOAD_EXAMPLES"] = "False"
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    home = config.stash.get(_AIRFLOW_HOME, None)
+    if home is not None:
+        shutil.rmtree(home, ignore_errors=True)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
