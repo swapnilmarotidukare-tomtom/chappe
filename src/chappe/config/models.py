@@ -24,21 +24,40 @@ class _Model(BaseModel):
 
 
 class TransportConfig(_Model):
-    type: Literal["slack"] = "slack"
-    connection_id: str = "chappe_slack"
+    """How messages are delivered."""
+
+    type: Literal["slack"] = Field(default="slack", description="Only `slack` in 0.0.1.")
+    connection_id: str = Field(
+        default="chappe_slack",
+        description="Airflow connection that holds the Slack bot token in its `password` field.",
+    )
 
 
 class StoreConfig(_Model):
-    type: Literal["airflow_variable"] = "airflow_variable"
+    """Where Chappe keeps what it has already sent for each run."""
+
+    type: Literal["airflow_variable"] = Field(
+        default="airflow_variable", description="Only `airflow_variable` in 0.0.1."
+    )
 
 
 class ThemeConfig(_Model):
-    name: str = "thread"
-    tokens: dict[str, Any] | None = None
+    """How messages look."""
+
+    name: str = Field(default="thread", description="`thread` or `plain` (the flat fallback).")
+    tokens: dict[str, Any] | None = Field(
+        default=None,
+        description="Icon and label overrides; `extends` names the theme the tokens start from.",
+    )
 
 
 class TimeConfig(_Model):
-    timezone: str = "UTC"
+    """Time display."""
+
+    timezone: str = Field(
+        default="UTC",
+        description="IANA zone name for clock times in messages, e.g. `Europe/Amsterdam`.",
+    )
 
     @field_validator("timezone")
     @classmethod
@@ -53,32 +72,65 @@ class TimeConfig(_Model):
 
 
 class BudgetConfig(_Model):
-    event_seconds: float = Field(default=10.0, gt=0)
-    final_seconds: float = Field(default=30.0, gt=0)
-    final_check_delay_seconds: float = Field(default=2.0, ge=0)
+    """Time limits for Chappe's own work in one callback. Calls into Airflow are not bounded."""
+
+    event_seconds: float = Field(
+        default=10.0, gt=0, description="Time budget for one step or run-started event."
+    )
+    final_seconds: float = Field(
+        default=30.0, gt=0, description="Time budget for the run-finished event."
+    )
+    final_check_delay_seconds: float = Field(
+        default=2.0,
+        ge=0,
+        description="Wait before the final event reads the store back and posts its replies.",
+    )
 
 
 class Defaults(_Model):
-    transport: TransportConfig = Field(default_factory=TransportConfig)
-    store: StoreConfig = Field(default_factory=StoreConfig)
-    theme: ThemeConfig = Field(default_factory=ThemeConfig)
-    time: TimeConfig = Field(default_factory=TimeConfig)
-    budgets: BudgetConfig = Field(default_factory=BudgetConfig)
-    ui_base_url: str | None = None
+    """Settings shared by all processes."""
+
+    transport: TransportConfig = Field(
+        default_factory=TransportConfig, description="Message delivery."
+    )
+    store: StoreConfig = Field(default_factory=StoreConfig, description="Delivery state.")
+    theme: ThemeConfig = Field(
+        default_factory=ThemeConfig, description="Theme for processes that set none."
+    )
+    time: TimeConfig = Field(default_factory=TimeConfig, description="Time display.")
+    budgets: BudgetConfig = Field(default_factory=BudgetConfig, description="Time limits.")
+    ui_base_url: str | None = Field(
+        default=None,
+        description="Airflow UI base URL for links to runs and tasks; no links when unset.",
+    )
 
 
 class DagRef(_Model):
-    dag_id: str
-    section: str | None = None
+    """A DAG that belongs to a process."""
+
+    dag_id: str = Field(description="The DAG's id.")
+    section: str | None = Field(
+        default=None,
+        description="Title of the DAG's default section (milestones outside any task group).",
+    )
 
 
 class LinkConfig(_Model):
-    key: str
+    """How the runs of a process's DAGs find each other (multi-DAG processes, 0.0.3)."""
+
+    key: str = Field(description="Template for the process key. Accepted and ignored in 0.0.1.")
 
 
 class AlertConfig(_Model):
-    mention: str | None = None
-    on: Literal["final_failure"] = "final_failure"
+    """Alerts for a failed run."""
+
+    mention: str | None = Field(
+        default=None,
+        description="Slack mention for failure alerts, in Slack syntax (`<@U…>`, `<!subteam^S…>`).",
+    )
+    on: Literal["final_failure"] = Field(
+        default="final_failure", description="When to alert. Only `final_failure` in 0.0.1."
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -90,25 +142,48 @@ class AlertConfig(_Model):
 
 
 class SectionOverride(_Model):
-    title: str
+    """Override for one section."""
+
+    title: str = Field(description="Section title.")
 
 
 class MilestoneOverride(_Model):
-    title: str | None = None
-    section: str | None = None
-    hidden: bool = False
+    """Override for one milestone, without changing the DAG."""
+
+    title: str | None = Field(default=None, description="Step title.")
+    section: str | None = Field(
+        default=None, description="Section for the step; `section=` on `@milestone` wins."
+    )
+    hidden: bool = Field(default=False, description="Leave the step out of the message.")
 
 
 class ProcessConfig(_Model):
-    enabled: bool = True
-    dags: list[DagRef] = Field(min_length=1)
-    link: LinkConfig | None = None
-    channel: str
-    title: str = "{{ dag_id }} · {{ run_id }}"
-    theme: ThemeConfig | None = None
-    alerts: AlertConfig = Field(default_factory=AlertConfig)
-    sections: dict[str, SectionOverride] = Field(default_factory=dict)
-    milestones: dict[str, MilestoneOverride] = Field(default_factory=dict)
+    """What one channel message represents: the DAG's run and where it is posted."""
+
+    enabled: bool = Field(default=True, description="Per-process switch.")
+    dags: list[DagRef] = Field(
+        min_length=1, description="Exactly one DAG in 0.0.1 (multi-DAG processes arrive in 0.0.3)."
+    )
+    link: LinkConfig | None = Field(default=None, description="Accepted and ignored in 0.0.1.")
+    channel: str = Field(description="Slack channel ID (`C…` or `G…`), not `#name`.")
+    title: str = Field(
+        default="{{ dag_id }} · {{ run_id }}",
+        description=(
+            "Message title, a template over `params`, `dag_id` and `run_id`. "
+            "Falls back to `<dag_id> · <run_id>` when a value is missing."
+        ),
+    )
+    theme: ThemeConfig | None = Field(
+        default=None, description="Theme for this process; `defaults.theme` when unset."
+    )
+    alerts: AlertConfig = Field(default_factory=AlertConfig, description="Failure alerts.")
+    sections: dict[str, SectionOverride] = Field(
+        default_factory=dict, description="Section overrides, keyed by section key."
+    )
+    milestones: dict[str, MilestoneOverride] = Field(
+        default_factory=dict,
+        description="Milestone overrides, keyed by the full task id (e.g. `prepare.geometry`).",
+    )
 
     @field_validator("dags")
     @classmethod
@@ -143,9 +218,18 @@ class ProcessConfig(_Model):
 
 
 class ChappeSettings(_Model):
-    enabled: bool = True
-    defaults: Defaults = Field(default_factory=Defaults)
-    processes: dict[str, ProcessConfig] = Field(default_factory=dict)
+    """Everything under the top-level `chappe:` key."""
+
+    enabled: bool = Field(
+        default=True, description="Global switch. `CHAPPE_ENABLED=false` also disables Chappe."
+    )
+    defaults: Defaults = Field(
+        default_factory=Defaults, description="Settings shared by all processes."
+    )
+    processes: dict[str, ProcessConfig] = Field(
+        default_factory=dict,
+        description="One entry per process; its name is what `ChappeNotifier(process=...)` uses.",
+    )
 
     @model_validator(mode="after")
     def _dag_in_one_process(self) -> ChappeSettings:
@@ -171,4 +255,6 @@ class ChappeSettings(_Model):
 
 
 class ConfigFile(_Model):
-    chappe: ChappeSettings
+    """The YAML file."""
+
+    chappe: ChappeSettings = Field(description="All Chappe settings.")
