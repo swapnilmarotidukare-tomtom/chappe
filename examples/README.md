@@ -11,6 +11,27 @@ Create your own internal Slack app per workspace. Never distribute a shared Chap
 
 The bot token goes into the `chappe_slack` Airflow connection (step 3 below). Never put it in a file in this repository.
 
+## Quick way: the helper script
+
+After step 1, everything else is one script. Your token, channel and mention live in one file **outside the repo**, `~/.config/chappe/dev.env`, with permissions 600. The script never prints the token or writes it into the repo.
+
+```bash
+uv sync --all-groups
+scripts/dev-airflow.sh setup        # once: creates ~/.config/chappe/dev.env; edit it
+scripts/dev-airflow.sh check        # validates the file and generates .airflow/chappe.dev.yaml
+scripts/dev-airflow.sh start        # stops leftover Airflow processes, then runs airflow standalone
+```
+
+In a second terminal:
+
+```bash
+scripts/dev-airflow.sh password     # the admin password for http://localhost:8080
+scripts/dev-airflow.sh run pass     # or: run fail, run parallel (the scenarios in section 4)
+scripts/dev-airflow.sh stop         # when you are done
+```
+
+`start` passes the token to Airflow as `AIRFLOW_CONN_CHAPPE_SLACK`, only in that process. If you also added `chappe_slack` in the Airflow UI, the variable wins. Sections 2 and 3 below are the same steps by hand.
+
 ## 2. Start Airflow (local dev)
 
 From the repository root:
