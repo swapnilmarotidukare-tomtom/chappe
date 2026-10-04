@@ -6,15 +6,22 @@
 
 ## What it does
 
-Chappe reports the progress of Apache Airflow 3 runs to Slack. Each DAG run gets one channel message that is edited in place as milestones start and finish. The step history and the final result go in that message's thread. When a run fails, an alert mentions your on-call. DAG authors mark the tasks that matter with `@milestone`; channel, theme and icons are configuration.
+Chappe reports the progress of Apache Airflow 3 runs to Slack. Each DAG run gets one channel message that is edited in place as milestones start and finish. The message shows every step as a station on a line, with its duration. When a run fails, an alert mentions your on-call in the message's thread. DAG authors mark the tasks that matter with `@milestone`; channel, theme and icons are configuration.
 
-```text
-:hourglass_flowing_sand: *orders 2026.10.1* · In progress · 5h 54m · started 08:05
-:white_check_mark::white_check_mark::white_check_mark:  *Prepare* · Passed
-:hourglass_flowing_sand::white_circle:  *Regression vs baseline 2026.10.0* · ID stability
-Now: ID stability (5m)
-Airflow run
+````text
+*orders 2026.10.1*
+:large_yellow_circle: In progress · started 08:05 · 7m
 ```
+●  Extract                        2m
+┃
+◉  Transform              running 5m
+┆
+○  Load
+┆
+○  Report
+```
+Airflow run
+````
 
 ## Why the name
 
@@ -179,18 +186,18 @@ Where a limit names a Slack message, it is the run's message or a duplicate of i
 
 ### Duplicates and lost writes
 
-- When the first events of a run arrive in parallel, two parent messages can rarely be posted. Chappe heals this itself: the message carrying the newest status wins (equal ones: the lowest Slack timestamp) and the other is deleted. Replies that were under the deleted message are sent again under the winner by the next event that renders them, but only while the run is unfinished; after the final event they are not repeated.
+- When the first events of a run arrive in parallel, two parent messages can rarely be posted. Chappe heals this itself: the message carrying the newest status wins (equal ones: the lowest Slack timestamp) and the other is deleted. Anything that was posted under the deleted message (an alert, or the replies of a theme that posts step replies; no built-in theme does) is sent again under the winner by the next event that renders it, but only while the run is unfinished; after the final event it is not repeated.
 - A duplicate run message is deleted with one Slack request, never retried, after a fresh store read. If it becomes the winner while that request is in flight (for example because it just got the final status), it is deleted anyway and the run shows the other message's older status, such as "In progress"; after the run has finished nothing repairs it. Very rare. A failed delete is left to the next event; after the final event there is none, so a duplicate left then stays for good: delete it by hand.
 - Chappe never retries a post that failed in an ambiguous way (timeout, Slack 5xx), because it may have landed. If it did land, the next event posts again and the first message stays as an orphan: without history scope Chappe cannot find it. Delete it by hand.
-- If someone deletes the run's message by hand, the next event posts a new one. Thread replies and alerts already sent under the deleted message are sent again in the new thread only by events that still render them, and only while the run is unfinished: a step's reply comes back without its duration once its own event has passed, and nothing is repeated after the final event.
+- If someone deletes the run's message by hand, the next event posts a new one. Alerts already sent under the deleted message are sent again in the new thread only by events that still render them, and only while the run is unfinished; nothing is repeated after the final event. The same holds for the step replies of a theme that posts them (none of the built-in themes does), which also come back without their duration once the step's own event has passed.
 - The final check reads the store back once, a few seconds after the final message. Every parent edit, retries included, first checks the store and gives up when a newer render is stored, so a retrying non-final writer cannot overwrite the final status. One edit already in flight when the final event writes can still land after the check and leave a stale status until the next event of the run (normally none). Rare; it needs a single Slack request slower than the check delay.
 - If the final alert's post fails in an ambiguous way (timeout, Slack 5xx), it is not retried, because it may have landed; no later event exists, so on-call may not be mentioned. The error is logged with the process key.
-- A step's reply can still be posted twice (one with a duration, one without) in a window of milliseconds: every event re-reads the store right before each reply, and the final event posts its replies only after its check delay, so a duplicate needs one event's reply to be in flight exactly while the other re-reads.
+- Applies only to themes that post step replies (none of the built-in themes does): a step's reply can still be posted twice (one with a duration, one without) in a window of milliseconds: every event re-reads the store right before each reply, and the final event posts its replies only after its check delay, so a duplicate needs one event's reply to be in flight exactly while the other re-reads.
 
 ### What the message shows
 
-- Step durations are shown only for a step whose own event Chappe processed. Airflow's runtime read returns states only, so other steps show their state without a duration.
-- Thread replies whose step had no own callback appear in the order they were sent, not in step order.
+- Step durations are shown only for a step whose own event Chappe processed. Airflow's runtime read returns states only, so other steps show their state without a duration. With the default `metro` theme, the final message shows no step durations, only the run's total time, because it is rendered from the DAG callback, which has no step times.
+- Applies only to themes that post step replies (none of the built-in themes does): replies whose step had no own callback appear in the order they were sent, not in step order.
 - If Airflow runs a DAG callback without the run's context (no `dag_run`, no params), a title template that uses params falls back to `<dag_id> · <run_id>` in the final message.
 
 ### Time
