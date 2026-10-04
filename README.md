@@ -14,9 +14,11 @@ Chappe reports the progress of Apache Airflow 3 runs to Slack. Each DAG run gets
 :hourglass_flowing_sand: Transform · running since 08:07
 :white_circle: Load
 :white_circle: Report
+
+:stopwatch: Last updated 08:12 UTC
 ```
 
-That is the default `ledger` theme (the title links to the Airflow run). The `metro` theme draws the run as a line of stations, and `plain` is a one-line fallback; pick one with `theme: {name: …}`.
+That is the default `ledger` theme (the title links to the Airflow run; the last line says when Chappe last edited the message, always in UTC). The `metro` theme draws the run as a line of stations, and `plain` is a one-line fallback; pick one with `theme: {name: …}`.
 
 ## Why the name
 

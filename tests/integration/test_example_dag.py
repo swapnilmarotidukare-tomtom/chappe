@@ -162,7 +162,9 @@ def test_passing_run_lists_every_step_with_each_start_and_end_in_the_thread(
     assert lines[0].startswith(":large_green_circle: *<http://localhost:8080/dags/chappe_example/")
     assert "|chappe_example · " in lines[0] and lines[0].endswith(">* · Completed")
     # the example config uses the custom :chappe-*: icons for steps
-    assert lines[1:] == [f":chappe-done: {name}" for name in STEPS]
+    assert lines[1:5] == [f":chappe-done: {name}" for name in STEPS]
+    assert lines[5] == "" and lines[6].startswith(":stopwatch: Last updated ")
+    assert lines[6].endswith(" UTC") and len(lines) == 7
     replies = [m.text for m in api.replies(CHANNEL, parent.ts)]
     assert not any(m.broadcast for m in api.replies(CHANNEL, parent.ts))
     steps = replies_by_step(replies)
@@ -194,7 +196,10 @@ def test_failing_run_lists_the_failing_steps_and_alerts_once(
         ":chappe-done: Transform",
         ":chappe-failed: Load · Failed",
         ":chappe-failed: Report · Failed",
+        "",
+        lines[-1],
     ]
+    assert lines[-1].startswith(":stopwatch: Last updated ") and lines[-1].endswith(" UTC")
     replies = [m.text for m in api.replies(CHANNEL, parent.ts)]
     (alert,) = [text for text in replies if text.startswith("<@U0123456789>")]
     assert alert.startswith("<@U0123456789> :red_circle: *chappe_example · ")

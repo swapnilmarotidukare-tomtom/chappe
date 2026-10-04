@@ -12,6 +12,10 @@ LINK = "<https://airflow.invalid/dags/orders/runs/run_1|orders 2026.10.1>"
 SECOND = "Regression vs baseline 2026.10.0"
 
 
+def footer(at: str) -> list[str]:
+    return ["", f":stopwatch: Last updated {at} UTC"]
+
+
 def render(view: ProcessView, *, collapse: bool = False):  # type: ignore[no-untyped-def]
     ctx = replace(default_context("ledger"), collapse_done_sections=collapse)
     return LedgerTheme().render(view, ctx)
@@ -33,6 +37,7 @@ def test_running_single_section_has_no_section_line() -> None:
         ":white_check_mark: Parquet → Delta",
         ":hourglass_flowing_sand: Geometry · running since 09:23",
         ":white_circle: Aggregates",
+        *footer("09:28"),
     ]
 
 
@@ -51,6 +56,7 @@ def test_running_multi_section_lists_each_section_with_counts() -> None:
         f"*{SECOND}* · 0 of 2 done",
         ":hourglass_flowing_sand: ID stability · running since 13:54",
         ":white_circle: Regression",
+        *footer("13:59"),
     ]
 
 
@@ -79,6 +85,7 @@ def test_completed_run_lists_every_step() -> None:
         ":white_check_mark: Parquet → Delta",
         ":white_check_mark: Geometry",
         ":white_check_mark: Aggregates",
+        *footer("13:59"),
     ]
 
 
@@ -89,6 +96,7 @@ def test_failed_single_section_shows_counts_without_a_title() -> None:
         ":white_check_mark: Parquet → Delta",
         ":x: Geometry · Failed",
         ":white_circle: Aggregates",
+        *footer("11:39"),
     ]
 
 
@@ -98,6 +106,7 @@ def test_failed_multi_section_lists_only_the_failing_section() -> None:
         f"*{SECOND}* · 1 completed · 1 failed",
         ":white_check_mark: ID stability",
         ":x: Regression · Failed",
+        *footer("18:29"),
     ]
 
 
@@ -211,6 +220,7 @@ def test_a_single_section_never_collapses() -> None:
         ":white_check_mark: Parquet → Delta",
         ":white_check_mark: Geometry",
         ":white_check_mark: Aggregates",
+        *footer("13:59"),
     ]
 
 
@@ -249,3 +259,16 @@ def test_an_empty_failed_mark_leaves_no_double_space_in_the_alert() -> None:
     ctx = default_context("ledger", {"extra": {"header_failed": ""}})
     (alert,) = LedgerTheme().render(SAMPLES["single_failed"], ctx).alerts
     assert alert.text.startswith(f"{TEST_MENTION} *orders 2026.10.1* · Geometry")
+
+
+def test_last_updated_is_always_utc_whatever_the_configured_timezone() -> None:
+    from datetime import timedelta, timezone
+
+    ctx = replace(default_context("ledger"), tz=timezone(timedelta(hours=5, minutes=30)))
+    lines = LedgerTheme().render(SAMPLES["single_running"], ctx).parent.text.split("\n")
+    assert lines[0].endswith("· started 13:35")  # the run's start follows the config timezone
+    assert lines[-2:] == footer("09:28")  # the footer stays in UTC
+
+
+def test_a_waiting_run_has_no_last_updated_line() -> None:
+    assert "Last updated" not in render(SAMPLES["pending"]).parent.text

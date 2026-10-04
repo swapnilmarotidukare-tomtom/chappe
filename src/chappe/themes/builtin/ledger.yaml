@@ -27,3 +27,5 @@ extra:
   skipped: "skipped"
   not_run: "not run"
   more: "more"
+  updated_icon: ":stopwatch:"
+  last_updated: "Last updated"

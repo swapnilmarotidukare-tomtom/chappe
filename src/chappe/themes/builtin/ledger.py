@@ -8,7 +8,7 @@ icons: Slack shows each reply's own time, and the reply says the step's status i
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import ClassVar
 
 from chappe.core.messages import Alert, MessageSet, ParentMessage, ThreadEntry
@@ -43,15 +43,30 @@ class LedgerTheme:
     def _parent(self, view: ProcessView, ctx: RenderContext) -> str:
         header = self._header(view, ctx)
         blocks = self._blocks(view, ctx)
+        footer = self._footer(view, ctx)
         limit = ctx.limits.parent_chars
         longest = max((len(block.steps) for block in blocks), default=0)
         # Too long for Slack: keep the steps that matter (failed, running), then as many others
         # as fit, and say how many were left out. Never cut a line or a link in half.
         for cap in [None, *range(longest - 1, -1, -1)]:
-            text = "\n".join([header, *self._lines(blocks, cap, ctx)])
+            text = "\n".join([header, *self._lines(blocks, cap, ctx), *footer])
             if len(text) <= limit:
                 return text
         return clip(header, limit)
+
+    @staticmethod
+    def _footer(view: ProcessView, ctx: RenderContext) -> list[str]:
+        """A blank line, then when Chappe last edited the message, always in UTC.
+
+        Left out while nothing has started: a waiting run's message must not change over time.
+        """
+        if view.state is ProcessState.PENDING:
+            return []
+        words = ctx.tokens.extra
+        icon = ctx.fmt.icon(words.get("updated_icon", ""))
+        at = view.now.astimezone(timezone.utc).strftime("%H:%M")
+        line = f"{words.get('last_updated', 'Last updated')} {at} UTC"
+        return ["", f"{icon} {line}" if icon else line]
 
     def _lines(self, blocks: list[_Block], cap: int | None, ctx: RenderContext) -> list[str]:
         more = ctx.tokens.extra.get("more", "more")
