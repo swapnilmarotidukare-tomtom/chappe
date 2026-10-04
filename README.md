@@ -6,22 +6,17 @@
 
 ## What it does
 
-Chappe reports the progress of Apache Airflow 3 runs to Slack. Each DAG run gets one channel message that is edited in place as milestones start and finish. The message shows every step as a station on a line; a step's duration appears in the update its own callback makes, and the status line carries the run's total time. When a run fails, an alert mentions your on-call in the message's thread. DAG authors mark the tasks that matter with `@milestone`; channel, theme and icons are configuration.
+Chappe reports the progress of Apache Airflow 3 runs to Slack. Each DAG run gets one channel message that is edited in place as milestones start and finish. Its first line shows the run's status and links to the run in Airflow; below it, one line per step. A passed run shrinks to that one line, and a failed run lists only the sections that went wrong. Each step's start and end, with the error of a failed step, go into the message's thread, and when a run fails an alert there mentions your on-call. DAG authors mark the tasks that matter with `@milestone`; channel, theme and icons are configuration.
 
-````text
-*orders 2026.10.1*
-:large_yellow_circle: In progress · started 08:05 · 7m
+```text
+:large_yellow_circle: *orders 2026.10.1* · In progress · 7m · started 08:05
+:white_check_mark: Extract
+:hourglass_flowing_sand: Transform · running since 08:07
+:white_circle: Load
+:white_circle: Report
 ```
-●  Extract
-┃
-◉  Transform             since 08:07
-┆
-○  Load
-┆
-○  Report
-```
-Airflow run
-````
+
+That is the default `ledger` theme (the title links to the Airflow run). The `metro` theme draws the run as a line of stations, and `plain` is a one-line fallback; pick one with `theme: {name: …}`.
 
 ## Why the name
 
@@ -192,13 +187,13 @@ Where a limit names a Slack message, it is the run's message or a duplicate of i
 - If someone deletes the run's message by hand, the next event posts a new one. Alerts already sent under the deleted message are sent again in the new thread only by events that still render them, and only while the run is unfinished; nothing is repeated after the final event. The same holds for the step replies of a theme that posts them (none of the built-in themes does), which also come back without their duration once the step's own event has passed.
 - The final check reads the store back once, a few seconds after the final message. Every parent edit, retries included, first checks the store and gives up when a newer render is stored, so a retrying non-final writer cannot overwrite the final status. One edit already in flight when the final event writes can still land after the check and leave a stale status until the next event of the run (normally none). Rare; it needs a single Slack request slower than the check delay.
 - If the final alert's post fails in an ambiguous way (timeout, Slack 5xx), it is not retried, because it may have landed; no later event exists, so on-call may not be mentioned. The error is logged with the process key.
-- Applies only to themes that post step replies (none of the built-in themes does): a step's reply can still be posted twice (one with a duration, one without) in a window of milliseconds: every event re-reads the store right before each reply, and the final event posts its replies only after its check delay, so a duplicate needs one event's reply to be in flight exactly while the other re-reads.
+- With the default `ledger` theme and any theme that posts step replies: a step's reply can still be posted twice (one with a duration, one without) in a window of milliseconds: every event re-reads the store right before each reply, and the final event posts its replies only after its check delay, so a duplicate needs one event's reply to be in flight exactly while the other re-reads.
 
 ### What the message shows
 
-- Step durations are shown only for a step whose own event Chappe processed. Airflow's runtime read returns states only, so other steps show their state without a duration. With the default `metro` theme, the final message shows no step durations, only the run's total time, because it is rendered from the DAG callback, which has no step times.
-- Applies only to themes that post step replies (none of the built-in themes does): replies whose step had no own callback appear in the order they were sent, not in step order.
-- With the default `metro` theme, the failure alert is built from the run-end DAG callback. It names the failed step or steps, without their duration and, for a step that failed on its own, without its error text. On-call learns which step failed; the error is in the task log, which the alert links when `ui_base_url` is set.
+- Step durations are shown only for a step whose own event Chappe processed. Airflow's runtime read returns states only, so other steps show their state without a duration. With the `metro` theme, the final message shows no step durations, only the run's total time, because it is rendered from the DAG callback, which has no step times.
+- With the default `ledger` theme and any theme that posts step replies: replies whose step had no own callback appear in the order they were sent, not in step order.
+- With the `metro` theme, the failure alert is built from the run-end DAG callback. It names the failed step or steps, without their duration and, for a step that failed on its own, without its error text. On-call learns which step failed; the error is in the task log, which the alert links when `ui_base_url` is set.
 - If Airflow runs a DAG callback without the run's context (no `dag_run`, no params), a title template that uses params falls back to `<dag_id> · <run_id>` in the final message.
 
 ### Time
