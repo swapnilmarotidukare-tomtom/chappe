@@ -210,7 +210,7 @@ def test_a_failed_duplicate_delete_is_left_to_the_next_event(
     assert saved is not None and loser in saved.cleared_parents
 
 
-def _deadline_warning(caplog: pytest.LogCaptureFixture, loser: str) -> str:
+def _warning_naming(caplog: pytest.LogCaptureFixture, loser: str) -> str:
     return next(
         r.getMessage()
         for r in caplog.records
@@ -232,7 +232,7 @@ def test_a_duplicate_delete_past_the_deadline_names_the_known_winner(
     late = SlackTransport(api, clock=lambda: 100.0)  # past every deadline
     with caplog.at_level(logging.WARNING, logger="chappe"):
         writer(api, variables, transport=late).handle(stage(S, R, P))
-    warning = _deadline_warning(caplog, loser)
+    warning = _warning_naming(caplog, loser)
     assert KEY in warning and winner.ts in warning and "deadline" in warning
     assert "unknown" not in warning
     assert [name for name, _ in api.calls].count("delete") == 0
@@ -260,9 +260,84 @@ def test_a_store_read_out_of_time_inside_the_attempt_is_a_failed_delete(
     w = writer(api, variables, clock=lambda: now[0], transport=transport)
     with caplog.at_level(logging.WARNING, logger="chappe"):
         w.handle(stage(S, R, P))
-    warning = _deadline_warning(caplog, loser)
+    warning = _warning_naming(caplog, loser)
     assert KEY in warning and winner.ts in warning and "deadline" in warning
     assert [name for name, _ in api.calls].count("delete") == 0
+    saved = store_for(variables).load(KEY)
+    assert saved is not None and loser in saved.stale_parents
+
+
+def test_a_failed_duplicate_delete_on_the_final_event_must_be_deleted_by_hand(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No event follows the final one: its WARNING says the duplicate stays and must be deleted
+    by hand, never that the next event tries again."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    w = writer(api, variables)
+    w.handle(stage(S, R, P))
+    (winner,) = api.top_level(CHANNEL)
+    loser = api.post(CHANNEL, "duplicate parent")
+    store_for(variables).save(KEY, SentState(KEY, stale_parents=frozenset({loser})))
+    api.fail_next(TransportError("ratelimited", retryable=True, retry_after=1.0))
+
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        result = w.handle(stage(S, S, S, finished=ProcessState.SUCCEEDED), EventKind.RUN_FINISHED)
+    assert result is HandleResult.SENT
+    assert api.message(CHANNEL, loser) is not None
+    warning = _warning_naming(caplog, loser)
+    assert KEY in warning and winner.ts in warning
+    assert "stays and must be deleted by hand" in warning
+    assert "next event" not in warning
+
+
+def test_a_failed_duplicate_delete_on_a_non_final_event_is_left_to_the_next_event(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    api, variables = FakeSlackApi(), FakeVariables()
+    w = writer(api, variables)
+    w.handle(stage(S, R, P))
+    loser = api.post(CHANNEL, "duplicate parent")
+    store_for(variables).save(KEY, SentState(KEY, stale_parents=frozenset({loser})))
+    api.fail_next(TransportError("ratelimited", retryable=True, retry_after=1.0))
+
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        w.handle(stage(S, S, R))
+    warning = _warning_naming(caplog, loser)
+    assert "the next event tries again" in warning
+    assert "by hand" not in warning
+
+
+def test_a_store_read_error_inside_the_delete_attempt_is_logged_and_stops_the_event(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The store fails on the re-read right before the duplicate delete: a WARNING names the
+    process and both parents, nothing is deleted, and the error stops the event as any store
+    error does (an event whose store fails must not carry on writing)."""
+    reads = [0]
+    fail_from = [0]
+
+    def second_read_fails() -> None:
+        reads[0] += 1
+        if fail_from[0] and reads[0] >= fail_from[0]:
+            raise RuntimeError("metadata database down")
+
+    api, variables = FakeSlackApi(), FakeVariables()
+    w = writer(api, variables, before_read=second_read_fails)
+    w.handle(stage(S, R, P))
+    (winner,) = api.top_level(CHANNEL)
+    loser = api.post(CHANNEL, "duplicate parent")
+    store_for(variables).save(KEY, SentState(KEY, stale_parents=frozenset({loser})))
+    fail_from[0] = reads[0] + 2  # the event's first read works, the attempt's re-read fails
+    calls = len(api.calls)
+
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        assert w.handle(stage(S, S, R)) is HandleResult.ERROR
+    assert len(api.calls) == calls  # nothing deleted, parent not edited
+    assert api.message(CHANNEL, loser) is not None
+    warning = _warning_naming(caplog, loser)
+    assert KEY in warning and winner.ts in warning
+    assert "chappe: event failed" in caplog.text  # re-raised unchanged
+    fail_from[0] = 0
     saved = store_for(variables).load(KEY)
     assert saved is not None and loser in saved.stale_parents
 

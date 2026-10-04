@@ -174,7 +174,7 @@ class Engine:
             return HandleResult.DEGRADED
         try:
             if sent is not None:
-                sent = self._clear_stale(view.key, sent, deadline)
+                sent = self._clear_stale(view.key, sent, deadline, final=final)
             if sent is not None and not write_allowed(view.watermark, sent):
                 return self._send_missing(view, sent, deadline, final=final)
             messages = self._render(view)
@@ -213,12 +213,12 @@ class Engine:
             if not plan_sends(messages, sent).update_parent:
                 state, saved = sent, False
             else:
-                written = self._write_parent(key, sent.parent_ref, text, wm, deadline)
+                written = self._write_parent(key, sent.parent_ref, text, wm, deadline, final=final)
                 if written is None:  # a newer render owns the parent
                     return self._yielded(view, messages, deadline, final=final)
                 state, saved = written, True
         else:
-            posted = self._post_parent(key, text, wm, deadline)
+            posted = self._post_parent(key, text, wm, deadline, final=final)
             if posted is None:
                 return self._yielded(view, messages, deadline, final=final)
             state, saved = posted, True
@@ -339,7 +339,9 @@ class Engine:
             saved = True
         return saved, True
 
-    def _post_parent(self, key: str, text: str, wm: Watermark, deadline: float) -> SentState | None:
+    def _post_parent(
+        self, key: str, text: str, wm: Watermark, deadline: float, *, final: bool
+    ) -> SentState | None:
         """Post a parent. If parallel events posted too, the parent carrying the newest written view
         wins, ties to the lowest Slack ts (contract D2).
 
@@ -373,7 +375,8 @@ class Engine:
                 break
             # the merge re-adds `mine`; the winner rule (D2) still decides
             state = self._record(key, claim)
-        state = self._clear_stale(key, state, deadline)  # deletes `mine` when another parent won
+        # deletes `mine` when another parent won
+        state = self._clear_stale(key, state, deadline, final=final)
         winner = state.parent_ref
         if winner is None or winner == mine:
             return state
@@ -381,7 +384,7 @@ class Engine:
         self._metric("chappe.duplicate_parent")
         if state.watermark is not None and state.watermark.newer_than(wm):
             return None
-        return self._write_parent(key, winner, text, wm, deadline)
+        return self._write_parent(key, winner, text, wm, deadline, final=final)
 
     def _delete_unsaved(self, key: str, ts: str, deadline: float) -> None:
         """Best effort: a parent whose claim was never saved is invisible to every later event,
@@ -397,7 +400,15 @@ class Engine:
             )
 
     def _write_parent(
-        self, key: str, ts: str, text: str, wm: Watermark, deadline: float, retargets: int = 0
+        self,
+        key: str,
+        ts: str,
+        text: str,
+        wm: Watermark,
+        deadline: float,
+        retargets: int = 0,
+        *,
+        final: bool,
     ) -> SentState | None:
         """Edit the parent `ts`. Returns None when a newer render owns the parent: stored before
         any attempt (an attempt never overwrites a newer render, spec 7.1), or on a re-posted
@@ -444,12 +455,14 @@ class Engine:
                 self._metric("chappe.parent_replaced")
                 current = self._save(key, SentState(key, cleared_parents=frozenset({ts})), deadline)
             if current.parent_ref is None:
-                return self._post_parent(key, text, wm, deadline)
+                return self._post_parent(key, text, wm, deadline, final=final)
             # another parent won meanwhile and ours was deleted, or a duplicate took over
-            return self._write_parent(key, current.parent_ref, text, wm, deadline, retargets)
+            return self._write_parent(
+                key, current.parent_ref, text, wm, deadline, retargets, final=final
+            )
         if not written and moved and retargets < 2:
             log.info("chappe: the parent of %s is now %s; writing there", key, moved[0])
-            return self._write_parent(key, moved[0], text, wm, deadline, retargets + 1)
+            return self._write_parent(key, moved[0], text, wm, deadline, retargets + 1, final=final)
         if not written:
             log.info("chappe: a newer render of %s owns the parent; not editing it", key)
             return None
@@ -465,22 +478,42 @@ class Engine:
             ),
         )
 
-    def _clear_stale(self, key: str, state: SentState, deadline: float) -> SentState:
+    def _clear_stale(
+        self, key: str, state: SentState, deadline: float, *, final: bool
+    ) -> SentState:
         """Delete losing duplicate parents and record each as cleared (contract D2).
 
         Each event makes one attempt per duplicate, never a retry: the store is read inside the
         attempt, right before its single request, and a duplicate that won again meanwhile is kept.
         A failed attempt leaves the duplicate to the next event; so does a delete that would start
-        after the deadline. Each delete is recorded right after it is made, without a deadline
-        check (it records a Slack call already made).
+        after the deadline. On the final event no event follows: the duplicate stays and must be
+        deleted by hand. A store that fails on that read stops the event, as everywhere else.
+        Each delete is recorded right after it is made, without a deadline check (it records a
+        Slack call already made).
         """
         winner: list[str | None] = [state.parent_ref]  # as seen by the latest read
+        if final:  # no event follows the final one
+            outcome = "the duplicate stays and must be deleted by hand"
+        else:
+            outcome = "leaving it, the next event tries again"
+
+        def known_winner() -> str:
+            return winner[0] if winner[0] is not None else "unknown"
 
         def still_stale(ts: str) -> bool:
             try:
                 current = self._load(key, deadline)  # the winner may have changed since `state`
             except _OutOfTime:
                 raise TransportError(DEADLINE, retryable=True) from None
+            except Exception:
+                log.warning(
+                    "chappe: could not read the store before deleting duplicate parent %s of %s; "
+                    "the winner is %s; not deleting it",
+                    ts,
+                    key,
+                    known_winner(),
+                )
+                raise
             winner[0] = None if current is None else current.parent_ref
             return winner[0] != ts
 
@@ -494,12 +527,12 @@ class Engine:
                 )
             except TransportError as exc:
                 log.warning(
-                    "chappe: could not delete duplicate parent %s of %s (%s); the winner is %s; "
-                    "leaving it, the next event tries again",
+                    "chappe: could not delete duplicate parent %s of %s (%s); the winner is %s; %s",
                     ts,
                     key,
                     exc.code,
-                    winner[0] if winner[0] is not None else "unknown",
+                    known_winner(),
+                    outcome,
                 )
                 continue
             if not deleted:
@@ -527,7 +560,7 @@ class Engine:
         if loaded.parent_text != text and (written is None or view.watermark.newer_than(written)):
             log.warning("chappe: repairing a late overwrite of the final message for %s", view.key)
             self._metric("chappe.final_repaired")
-        self._write_parent(view.key, loaded.parent_ref, text, view.watermark, deadline)
+        self._write_parent(view.key, loaded.parent_ref, text, view.watermark, deadline, final=True)
 
     def _mark_degraded(self, view: ProcessView, exc: TransportError, deadline: float) -> None:
         log.error("chappe: Slack refused (%s); stopping for process %s", exc.code, view.key)
