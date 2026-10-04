@@ -180,7 +180,8 @@ THREAD_VIEWS = [
     _thread_view((S, S, S), None, finished=True),
 ]
 THREAD_FINAL = len(THREAD_VIEWS) - 1
-TRANSFORM_OWN, TRANSFORM_OWN_OLDER = 3, 5
+# the events that carry each step's own finish times
+OWN_EVENTS = {"Extract": {1}, "Transform": {3, 5}, "Load": {4}}
 
 
 @settings(max_examples=200, deadline=None)
@@ -209,7 +210,8 @@ def test_thread_parent_shows_the_newest_view_and_every_reply_goes_out_once(
     (parent,) = api.top_level(CHANNEL)
     replies = [m.text for m in api.replies(CHANNEL, parent.ts)]
     assert len(replies) == 4  # Extract, Transform, Load, and the result: once each
-    (transform,) = [text for text in replies if "*Transform*" in text]
-    before_final = order[: order.index(THREAD_FINAL)]
-    if TRANSFORM_OWN in before_final or TRANSFORM_OWN_OLDER in before_final:
-        assert "1h 00m" in transform  # its own callback came in time: the reply has its duration
+    before_final = set(order[: order.index(THREAD_FINAL)])
+    for title, own_events in OWN_EVENTS.items():
+        (reply,) = [text for text in replies if f"*{title}*" in text]
+        if own_events & before_final:
+            assert "1h 00m" in reply  # its own callback came in time: the reply has its duration

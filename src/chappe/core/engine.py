@@ -13,7 +13,7 @@ from typing import Any
 from chappe.core.errors import StoreError, TransportError
 from chappe.core.events import ChappeEvent, EventKind
 from chappe.core.messages import MessageSet
-from chappe.core.reconcile import SentState, plan_sends, slack_ts_key, write_allowed
+from chappe.core.reconcile import SendPlan, SentState, plan_sends, slack_ts_key, write_allowed
 from chappe.core.render import RenderContext
 from chappe.core.view import ProcessView, Watermark
 from chappe.ports.source import Source
@@ -171,7 +171,8 @@ class Engine:
                 return HandleResult.YIELDED
             state, saved = posted, True
 
-        replied, complete = self._send_replies(view, messages, state, deadline, final=final)
+        plan = plan_sends(messages, state)
+        replied, complete = self._send_replies(view, plan, state, deadline, final=final)
         if complete and not (replied or saved):
             # nothing changed in Slack; remember the watermark
             self._store.save(key, SentState(key, watermark=wm))
@@ -180,25 +181,28 @@ class Engine:
     def _send_missing(
         self, view: ProcessView, sent: SentState, deadline: float, *, final: bool
     ) -> HandleResult:
-        """A view that is not newer never touches the parent, but sends replies not yet sent.
+        """A view that is not newer never touches the parent, but while the run is unfinished it
+        sends replies not yet sent.
 
         Parallel tasks race: a task's own callback (the only view with its times) can be older
         than a parallel event that already showed it finished. Its reply must still go out.
-        Without a parent, a newer event posts it and sends the replies.
+        Without a parent, a newer event posts it and sends the replies. Once the stored run is
+        finished, nothing older is sent (finished is sticky, spec 7.1): a cleared and rerun step
+        or a late duplicate final event must not add replies under the final status.
         """
-        if sent.parent_ref is None:
+        stored = sent.watermark
+        if sent.parent_ref is None or (stored is not None and stored.finished):
             return HandleResult.SKIPPED
-        messages = self._render(view)
-        plan = plan_sends(messages, sent)
+        plan = plan_sends(self._render(view), sent)
         if not (plan.entries or plan.alerts):
             return HandleResult.SKIPPED
-        self._send_replies(view, messages, sent, deadline, final=final)
-        return HandleResult.SENT
+        replied, _ = self._send_replies(view, plan, sent, deadline, final=final)
+        return HandleResult.SENT if replied else HandleResult.SKIPPED
 
     def _send_replies(
         self,
         view: ProcessView,
-        messages: MessageSet,
+        plan: SendPlan,
         state: SentState,
         deadline: float,
         *,
@@ -210,7 +214,6 @@ class Engine:
         """
         key, wm = view.key, view.watermark
         saved = False
-        plan = plan_sends(messages, state)
         replies = [(e.key, e.text, e.broadcast) for e in plan.entries]
         replies += [(a.key, a.text, False) for a in plan.alerts]
         for index, (reply_key, reply, broadcast) in enumerate(replies):

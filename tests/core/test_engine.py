@@ -256,7 +256,7 @@ def test_final_read_back_repairs_a_late_non_final_writer() -> None:
     assert saved.watermark == final.watermark
 
 
-def test_known_limit_until_0_0_4_clearing_tasks_after_the_run_finished_keeps_final() -> None:
+def test_known_limit_until_0_0_4_a_cleared_task_leaves_the_final_status() -> None:
     """Pinned known limit (README, Task 19): "Clearing tasks after a run finished leaves the final
     status until the run finishes again." Finished is sticky, so a non-finished render after a
     finished one is skipped. 0.0.4 changes this on purpose; change this test with it, never by
@@ -649,3 +649,83 @@ def test_an_older_view_without_a_stored_parent_sends_nothing() -> None:
     w = writer(api, variables, theme=ThreadTheme(), context=THREAD_CTX)
     assert w.handle(own) is HandleResult.SKIPPED
     assert api.calls == []
+
+
+def finished_run(load: StepState, state: ProcessState) -> ProcessView:
+    """The DAG callback: no step carries times."""
+    builder = ProcessViewBuilder(key=KEY).section("Main")
+    builder.step("Extract", S, 10, timed=False).step("Transform", S, 261, timed=False)
+    return builder.step("Load", load, 78, timed=False).finished(state).build()
+
+
+def rerun(load: StepState) -> ProcessView:
+    """Load was cleared after the run finished; its own callback reports the rerun."""
+    builder = ProcessViewBuilder(key=KEY).section("Main")
+    builder.step("Extract", S, 10, timed=False).step("Transform", S, 261, timed=False)
+    return builder.step("Load", load, 78).build()
+
+
+def test_known_limit_until_0_0_4_thread_a_rerun_step_after_a_passed_run_posts_nothing() -> None:
+    """The thread-theme variant of the known limit: a cleared Load that reruns and fails adds
+    no ":x: Load · Failed" reply under the "Passed" message, and the parent keeps the final status.
+    """
+    api, variables = FakeSlackApi(), FakeVariables()
+    theme = ThreadTheme()
+    final = finished_run(S, ProcessState.SUCCEEDED)
+    writer(api, variables, theme=theme, context=THREAD_CTX).handle(final, EventKind.RUN_FINISHED)
+    calls = len(api.calls)
+
+    w = writer(api, variables, theme=theme, context=THREAD_CTX)
+    assert w.handle(rerun(F)) is HandleResult.SKIPPED
+    assert len(api.calls) == calls
+    (parent,) = api.top_level(CHANNEL)
+    assert parent.text == theme.render(final, THREAD_CTX).parent.text
+
+
+def test_a_step_cleared_after_a_failed_run_that_then_succeeds_posts_nothing() -> None:
+    api, variables = FakeSlackApi(), FakeVariables()
+    theme = ThreadTheme()
+    final = finished_run(F, ProcessState.FAILED)
+    writer(api, variables, theme=theme, context=THREAD_CTX).handle(final, EventKind.RUN_FINISHED)
+    calls = len(api.calls)
+
+    w = writer(api, variables, theme=theme, context=THREAD_CTX)
+    assert w.handle(rerun(S)) is HandleResult.SKIPPED
+    assert len(api.calls) == calls
+    (parent,) = api.top_level(CHANNEL)
+    assert parent.text == theme.render(final, THREAD_CTX).parent.text
+
+
+def test_a_late_older_final_event_with_another_state_posts_nothing() -> None:
+    """No process:<state> broadcast and no alert from an older duplicate RUN_FINISHED."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    theme = ThreadTheme()
+    passed = finished_run(S, ProcessState.SUCCEEDED)
+    writer(api, variables, theme=theme, context=THREAD_CTX).handle(passed, EventKind.RUN_FINISHED)
+    calls = len(api.calls)
+
+    failed = finished_run(F, ProcessState.FAILED)
+    failed = replace(failed, now=passed.now - timedelta(minutes=1))
+    assert not failed.watermark.newer_than(passed.watermark)
+    w = writer(api, variables, theme=theme, context=THREAD_CTX)
+    assert w.handle(failed, EventKind.RUN_FINISHED) is HandleResult.SKIPPED
+    assert len(api.calls) == calls
+
+
+def test_an_older_view_out_of_time_before_its_first_reply_is_skipped() -> None:
+    api, variables = FakeSlackApi(), FakeVariables()
+    load_first = parallel_run(transform_timed=False, load_timed=True)
+    writer(api, variables, theme=ThreadTheme(), context=THREAD_CTX).handle(load_first)
+    calls = len(api.calls)
+
+    ticks = iter([0.0])  # the deadline is computed at 0s; every later reading is past it
+    w = writer(
+        api,
+        variables,
+        theme=ThreadTheme(),
+        context=THREAD_CTX,
+        clock=lambda: next(ticks, 100.0),
+    )
+    own = parallel_run(transform_timed=True, load_timed=False, later=-1)
+    assert w.handle(own) is HandleResult.SKIPPED
+    assert len(api.calls) == calls
