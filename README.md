@@ -26,7 +26,7 @@ Claude Chappe (1763–1805), a French inventor, built the optical telegraph with
 
 - A Slack outage never fails a task: Chappe's errors are logged, not raised into Airflow.
 - A delayed update is fine. A wrong status is not.
-- When Chappe cannot tell whether a post landed, it does not retry it. A rare leftover message beats a double post.
+- When Chappe cannot tell whether a post landed, it does not retry it, because a retry would post twice whenever the first try did land. A later event may still post again in that case; see [Known limits](#known-limits-of-001).
 
 ## When it helps
 
