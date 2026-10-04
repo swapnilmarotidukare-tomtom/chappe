@@ -44,7 +44,9 @@ class StoreConfig(_Model):
 class ThemeConfig(_Model):
     """How messages look."""
 
-    name: str = Field(default="thread", description="`thread` or `plain` (the flat fallback).")
+    name: str = Field(
+        default="metro", description="`metro` (default) or `plain` (the flat fallback)."
+    )
     tokens: dict[str, Any] | None = Field(
         default=None,
         description="Icon and label overrides; `extends` names the theme the tokens start from.",

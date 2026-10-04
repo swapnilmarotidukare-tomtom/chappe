@@ -13,10 +13,10 @@ from chappe.core.events import EventKind
 from chappe.core.model import ProcessState, StepState
 from chappe.core.reconcile import slack_ts_key
 from chappe.core.view import ProcessView
-from chappe.themes.builtin.thread import ThreadTheme
 from tests.support.engine import CHANNEL, KEY, render, stage, store_for, writer
 from tests.support.fakes import FakeSlackApi, FakeVariables
 from tests.support.samples import ProcessViewBuilder, default_context
+from tests.support.thread_theme import ThreadTheme
 
 S, P, R = StepState.SUCCEEDED, StepState.PENDING, StepState.RUNNING
 FIRST_VIEWS = [stage(R, P, P), stage(S, R, P), stage(R, R, P)]
@@ -157,7 +157,7 @@ def test_any_order_or_duplication_ends_in_the_final_render(order: list[int]) -> 
     assert [m.text for m in api.replies(CHANNEL, parent.ts)] == [e.text for e in final.thread]
 
 
-THREAD_CTX = default_context("thread")
+THREAD_CTX = default_context("plain")
 
 
 def _thread_view(

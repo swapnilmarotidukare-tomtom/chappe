@@ -1,4 +1,6 @@
-"""Default theme: status header, one icon row per section, history in the thread."""
+"""Test-only copy of the removed `thread` theme: one reply per finished step and a broadcast final
+result. Engine tests use it to exercise thread entries, broadcasts and the thread-entry rule; it
+renders with the plain tokens (`default_context("plain")`)."""
 
 from __future__ import annotations
 

@@ -16,7 +16,6 @@ from chappe.core.events import EventKind
 from chappe.core.model import ProcessState, StepState
 from chappe.core.reconcile import SentState
 from chappe.core.view import ProcessView
-from chappe.themes.builtin.thread import ThreadTheme
 from chappe.transports.slack.transport import SlackTransport
 from tests.support.engine import (
     CHANNEL,
@@ -30,9 +29,10 @@ from tests.support.engine import (
 )
 from tests.support.fakes import FakeSlackApi, FakeVariables
 from tests.support.samples import ProcessViewBuilder, default_context
+from tests.support.thread_theme import ThreadTheme
 
 S, P, R, F = StepState.SUCCEEDED, StepState.PENDING, StepState.RUNNING, StepState.FAILED
-THREAD_CTX = default_context("thread")
+THREAD_CTX = default_context("plain")
 WAIT_S = 5.0  # a generous bound: the threads below only ever wait for each other
 
 

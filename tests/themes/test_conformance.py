@@ -16,10 +16,6 @@ class TestPlain(ThemeConformance):
     theme = THEMES["plain"]
 
 
-class TestThread(ThemeConformance):
-    theme = THEMES["thread"]
-
-
 class TestMetro(ThemeConformance):
     theme = THEMES["metro"]
 
