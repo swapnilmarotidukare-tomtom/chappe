@@ -307,6 +307,106 @@ def test_a_failed_duplicate_delete_on_a_non_final_event_is_left_to_the_next_even
     assert "by hand" not in warning
 
 
+class FailingDuplicateDeletes(SlackTransport):
+    """Every duplicate delete fails; optionally the parent is deleted by hand right before the
+    n-th parent edit (counting from 1)."""
+
+    def __init__(self, api: FakeSlackApi, hand_delete_on_update: int | None = None) -> None:
+        super().__init__(api, clock=lambda: 0.0)
+        self.fake = api
+        self.updates = 0
+        self.hand_delete_on_update = hand_delete_on_update
+
+    def delete_duplicate(
+        self, channel: str, ts: str, *, deadline: float, still_stale: Callable[[], bool]
+    ) -> bool:
+        raise TransportError("ratelimited", retryable=True, retry_after=1.0)
+
+    def update_parent(
+        self,
+        channel: str,
+        ts: str,
+        text: str,
+        metadata: Mapping[str, Any] | None,
+        *,
+        deadline: float,
+        still_current: Callable[[], bool] | None = None,
+    ) -> bool:
+        self.updates += 1
+        if self.updates == self.hand_delete_on_update:
+            self.fake.delete(channel, ts)
+        return super().update_parent(
+            channel, ts, text, metadata, deadline=deadline, still_current=still_current
+        )
+
+
+def _parallel_final_parent_wins(
+    api: FakeSlackApi, variables: FakeVariables, final: ProcessView
+) -> list[str]:
+    """Right before the next parent post, a parallel final event posts and claims its own parent
+    first: equal watermarks, so its lower ts wins and the post that follows loses."""
+    parallel: list[str] = []
+
+    def post_first(channel: str, thread_ts: str | None) -> None:
+        if thread_ts is not None:
+            return
+        api.before_post = None
+        ts = api.post(CHANNEL, "parallel parent")
+        wm = final.watermark
+        claim = SentState(KEY, parent_ref=ts, watermark=wm, parent_written=wm, parent_wms={ts: wm})
+        store_for(variables).save(KEY, claim)
+        parallel.append(ts)
+
+    api.before_post = post_first
+    return parallel
+
+
+def _lost_own_parent(api: FakeSlackApi, parallel: list[str]) -> str:
+    (winner,) = parallel
+    (own,) = [m.ts for m in api.top_level(CHANNEL) if m.ts != winner]
+    return own
+
+
+def test_the_final_events_own_losing_parent_must_be_deleted_by_hand(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The final event posts the parent, loses the race to a parallel final event, and its delete
+    of its own parent fails: no event follows, so it must be deleted by hand."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    final = stage(S, S, S, finished=ProcessState.SUCCEEDED)
+    parallel = _parallel_final_parent_wins(api, variables, final)
+    w = writer(api, variables, transport=FailingDuplicateDeletes(api))
+
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        assert w.handle(final, EventKind.RUN_FINISHED) is HandleResult.SENT
+    own = _lost_own_parent(api, parallel)
+    warning = _warning_naming(caplog, own)
+    assert KEY in warning and parallel[0] in warning
+    assert "stays and must be deleted by hand" in warning
+    assert "next event" not in warning
+
+
+def test_a_parent_reposted_by_the_final_read_back_must_be_deleted_by_hand(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The parent is deleted by hand just before the final read-back's edit. The read-back posts
+    a new one, which loses to a parallel final event's parent and cannot be deleted."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    writer(api, variables).handle(stage(S, R, P))
+    final = stage(S, S, S, finished=ProcessState.SUCCEEDED)
+    parallel = _parallel_final_parent_wins(api, variables, final)
+    # edit 1 is the final event's own write, edit 2 the read-back's
+    w = writer(api, variables, transport=FailingDuplicateDeletes(api, hand_delete_on_update=2))
+
+    with caplog.at_level(logging.WARNING, logger="chappe"):
+        assert w.handle(final, EventKind.RUN_FINISHED) is HandleResult.SENT
+    own = _lost_own_parent(api, parallel)
+    warning = _warning_naming(caplog, own)
+    assert KEY in warning and parallel[0] in warning
+    assert "stays and must be deleted by hand" in warning
+    assert "next event" not in warning
+
+
 def test_a_store_read_error_inside_the_delete_attempt_is_logged_and_stops_the_event(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
