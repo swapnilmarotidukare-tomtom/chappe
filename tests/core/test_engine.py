@@ -853,3 +853,52 @@ def test_a_retrying_older_update_does_not_overwrite_the_final_status() -> None:
     assert parent.text == render(final).parent.text
     saved = store_for(variables).load(KEY)
     assert saved is not None and saved.parent_written == final.watermark
+
+
+def test_an_event_that_loses_the_parent_still_sends_its_own_replies() -> None:
+    """Review m-1: Transform's own callback (A) yields the parent to a newer view (B) written
+    while A waited to retry; A's timed Transform reply must still go out while the run is
+    unfinished, and B's Load reply is not repeated."""
+    api, variables = FakeSlackApi(), FakeVariables()
+    theme = ThreadTheme()
+    setup = ProcessViewBuilder(key=KEY).section("Main").step("Extract", S, 10)
+    setup.step("Transform", R).step("Load", R).step("Publish", P)
+    writer(api, variables, theme=theme, context=THREAD_CTX).handle(setup.build())
+
+    b = writer(api, variables, theme=theme, context=THREAD_CTX)
+    newer = parallel_run(transform_timed=False, load_timed=True, later=1)
+
+    def newer_event_meanwhile(seconds: float) -> None:
+        b.handle(newer)
+
+    transport = SlackTransport(api, clock=lambda: 0.0, sleep=newer_event_meanwhile)
+    a = writer(api, variables, theme=theme, context=THREAD_CTX, transport=transport)
+    api.fail_next(TransportError("internal_error", retryable=True))
+    assert a.handle(parallel_run(transform_timed=True, load_timed=False)) is HandleResult.SENT
+
+    (reply,) = thread_replies(api, "Transform")
+    assert "4h 21m" in reply
+    assert len(thread_replies(api, "Load")) == 1
+    (parent,) = api.top_level(CHANNEL)
+    assert parent.text == theme.render(newer, THREAD_CTX).parent.text  # B's newer parent stays
+
+
+def test_an_event_that_loses_the_parent_after_the_run_finished_sends_nothing() -> None:
+    api, variables = FakeSlackApi(), FakeVariables()
+    theme = ThreadTheme()
+    writer(api, variables, theme=theme, context=THREAD_CTX).handle(
+        parallel_run(transform_timed=False, load_timed=False)
+    )
+    final = parallel_run(transform_timed=False, load_timed=False, finished=True)
+    b = writer(api, variables, theme=theme, context=THREAD_CTX)
+
+    def final_event_meanwhile(seconds: float) -> None:
+        b.handle(final, EventKind.RUN_FINISHED)
+
+    transport = SlackTransport(api, clock=lambda: 0.0, sleep=final_event_meanwhile)
+    a = writer(api, variables, theme=theme, context=THREAD_CTX, transport=transport)
+    api.fail_next(TransportError("internal_error", retryable=True))
+    own = parallel_run(transform_timed=True, load_timed=False, later=1)
+    assert a.handle(own) is HandleResult.YIELDED
+    (reply,) = thread_replies(api, "Transform")
+    assert "4h 21m" not in reply  # the final event's fallback; nothing older follows it

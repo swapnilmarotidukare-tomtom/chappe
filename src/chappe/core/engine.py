@@ -212,13 +212,13 @@ class Engine:
                 state, saved = sent, False
             else:
                 written = self._write_parent(key, sent.parent_ref, text, wm, deadline)
-                if written is None:  # the parent was re-posted and a newer render owns it
-                    return HandleResult.YIELDED
+                if written is None:  # a newer render owns the parent
+                    return self._yielded(view, messages, deadline, final=final)
                 state, saved = written, True
         else:
             posted = self._post_parent(key, text, wm, deadline)
             if posted is None:
-                return HandleResult.YIELDED
+                return self._yielded(view, messages, deadline, final=final)
             state, saved = posted, True
 
         if final:
@@ -247,8 +247,25 @@ class Engine:
         loaded = self._load(key, deadline)
         return loaded if loaded is not None else state
 
+    def _yielded(
+        self, view: ProcessView, messages: MessageSet, deadline: float, *, final: bool
+    ) -> HandleResult:
+        """A newer render owns the parent; this event's own replies not sent yet still go out,
+        under the same rules as a view that is not newer (`_send_missing`)."""
+        current = self._load(view.key, deadline)
+        if current is None:
+            return HandleResult.YIELDED
+        result = self._send_missing(view, current, deadline, final=final, messages=messages)
+        return HandleResult.SENT if result is HandleResult.SENT else HandleResult.YIELDED
+
     def _send_missing(
-        self, view: ProcessView, sent: SentState, deadline: float, *, final: bool
+        self,
+        view: ProcessView,
+        sent: SentState,
+        deadline: float,
+        *,
+        final: bool,
+        messages: MessageSet | None = None,
     ) -> HandleResult:
         """A view that is not newer never touches the parent, but while the run is unfinished it
         sends replies not yet sent.
@@ -262,7 +279,7 @@ class Engine:
         stored = sent.watermark
         if sent.parent_ref is None or (stored is not None and stored.finished):
             return HandleResult.SKIPPED
-        plan = plan_sends(self._render(view), sent)
+        plan = plan_sends(messages if messages is not None else self._render(view), sent)
         if not (plan.entries or plan.alerts):
             return HandleResult.SKIPPED
         replied, _ = self._send_replies(view, plan, sent, deadline, final=final)
