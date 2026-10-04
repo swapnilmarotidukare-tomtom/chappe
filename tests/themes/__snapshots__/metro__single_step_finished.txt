@@ -1,0 +1,13 @@
+=== parent ===
+*orders 2026.10.1*
+:large_yellow_circle: In progress · started 08:05 · 5h 44m
+```
+●  Parquet → Delta
+┃
+●  Geometry                   4h 21m
+┃
+○  Aggregates
+```
+<https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
+=== thread ===
+=== alerts ===

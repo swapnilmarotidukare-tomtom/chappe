@@ -1,0 +1,16 @@
+=== parent ===
+*orders 2026.10.1*
+:large_green_circle: Passed · started 08:05 · 10h 11m
+```
+●  Parquet → Delta
+┃
+●  Geometry
+┃
+●  Aggregates
+┗━ Regression vs baseline 2026.10.0
+    ●  ID stability
+    ●  Regression
+```
+<https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
+=== thread ===
+=== alerts ===

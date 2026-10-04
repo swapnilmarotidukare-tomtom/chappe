@@ -1,0 +1,17 @@
+=== parent ===
+*orders 2026.10.1*
+:red_circle: Failed · started 08:05 · 10h 24m
+```
+●  Parquet → Delta
+┃
+●  Geometry
+┃
+●  Aggregates
+┗━ Regression vs baseline 2026.10.0
+    ●  ID stability
+    ✖  Regression             failed
+```
+<https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
+=== thread ===
+=== alerts ===
+[alert:process:failed] <!subteam^S0TEST> :rotating_light: *orders 2026.10.1* · Regression failed: Executor ran out of memory after 3 retries · <https://airflow.invalid/dags/orders/runs/run_1/tasks/regression|Log>

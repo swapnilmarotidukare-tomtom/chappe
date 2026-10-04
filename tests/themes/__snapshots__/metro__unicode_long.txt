@@ -1,0 +1,9 @@
+=== parent ===
+*Ünïcødé &lt;orders&gt; &amp; co*
+:large_yellow_circle: In progress · started 08:05 · 5m
+```
+◉  Generate &amp; consolidat… running 5m
+```
+<https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
+=== thread ===
+=== alerts ===

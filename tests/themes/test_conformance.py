@@ -20,6 +20,10 @@ class TestThread(ThemeConformance):
     theme = THEMES["thread"]
 
 
+class TestMetro(ThemeConformance):
+    theme = THEMES["metro"]
+
+
 @pytest.mark.parametrize("sample", sorted(SAMPLES))
 @pytest.mark.parametrize("theme_name", sorted(THEMES))
 def test_snapshot(

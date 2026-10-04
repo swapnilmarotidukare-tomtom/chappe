@@ -1,0 +1,11 @@
+=== parent ===
+*orders 2026.10.1*
+:white_circle: Waiting · started 08:05
+```
+○  Parquet → Delta
+┆
+○  Geometry
+```
+<https://airflow.invalid/dags/orders/runs/run_1|Airflow run>
+=== thread ===
+=== alerts ===

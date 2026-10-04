@@ -47,7 +47,7 @@ def three_steps(last: StepState) -> ProcessViewBuilder:
 
 
 def test_registered_in_themes() -> None:
-    assert {"thread": ThreadTheme, "plain": PlainTheme} == THEMES
+    assert {"thread": ThreadTheme, "plain": PlainTheme}.items() <= THEMES.items()
     assert ThreadTheme.name == "thread"
 
 
