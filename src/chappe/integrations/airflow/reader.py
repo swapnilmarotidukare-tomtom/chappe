@@ -14,10 +14,12 @@ class TaskStateReader(Protocol):
 
 
 def runtime_task_states(dag_id: str, run_id: str) -> Mapping[str, Any]:
-    """The only call into the Task SDK runtime (internal Airflow API; keep it in this function).
+    """The only use of the internal `RuntimeTaskInstance` API; keep it in this function.
 
-    Works in task callbacks and in DAG callbacks. Never call other runtime methods from a DAG
-    callback: the DAG processor does not answer them and the callback hangs.
+    Works in task callbacks and in DAG callbacks. Chappe's other calls through the Task SDK
+    runtime are the public `airflow.sdk.Variable` (the store) and `airflow.sdk.Connection` (the
+    Slack token); the DAG processor answers those too (spike S7). Never call other runtime
+    methods from a DAG callback: the DAG processor does not answer them and the callback hangs.
     """
     from airflow.sdk.execution_time.task_runner import RuntimeTaskInstance
 

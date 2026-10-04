@@ -1,4 +1,7 @@
-"""Apache Airflow 3 integration: the only package that imports Airflow.
+"""Apache Airflow 3 integration: callbacks, notifier, source and runtime wiring.
+
+Airflow is imported here and, lazily, by the Variable store (`chappe.stores.airflow_variable`);
+core, ports, themes and the Slack transport never import it.
 
 `ChappeNotifier` and `milestone` are re-exported lazily (spec 4.2), so importing this package
 alone does not import Airflow.
