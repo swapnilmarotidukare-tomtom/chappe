@@ -1,8 +1,8 @@
 # Chappe
 
-<p align="center"><img src="https://commons.wikimedia.org/wiki/Special:FilePath/Telegraphe_Chappe_1.jpg?width=480" alt="A Chappe semaphore telegraph tower: a mast with a crossbar and two movable arms" width="480"></p>
+<p align="center"><img src="docs/assets/chappe-telegraph.jpg" alt="A Chappe telegraph on top of a church tower, in a 19th-century painting" width="560"></p>
 
-<p align="center"><em>Chappe semaphore tower — <a href="https://commons.wikimedia.org/wiki/File:Telegraphe_Chappe_1.jpg">Wikimedia Commons</a>, public domain</em></p>
+<p align="center"><em>A Chappe telegraph on a church tower, 19th-century painting</em></p>
 
 ## What it does
 
