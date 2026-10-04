@@ -16,6 +16,7 @@ extra:
   header_succeeded: ":large_green_circle:"
   header_failed: ":red_circle:"
   started: "started"
+  reply_started: "STARTED"
   running_since: "running since"
   running: "running"
   in: "in"

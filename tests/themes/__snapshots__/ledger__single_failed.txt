@@ -7,8 +7,8 @@
 
 :stopwatch: Last updated 11:39 UTC
 === thread ===
-[step:main.parquet_delta:succeeded] *Parquet → Delta* · Completed
-[step:main.geometry:failed] *Geometry* · Failed
+[step:main.parquet_delta:succeeded] COMPLETED: *Parquet → Delta*
+[step:main.geometry:failed] FAILED: *Geometry*
 Executor ran out of memory after 3 retries
 === alerts ===
 [alert:process:failed] <!subteam^S0TEST> :red_circle: *orders 2026.10.1* · Geometry: Executor ran out of memory after 3 retries · <https://airflow.invalid/dags/orders/runs/run_1/tasks/geometry|Log>

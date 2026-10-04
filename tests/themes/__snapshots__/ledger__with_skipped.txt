@@ -6,7 +6,7 @@
 
 :stopwatch: Last updated 09:38 UTC
 === thread ===
-[step:main.parquet_delta:succeeded] *Parquet → Delta* · Completed
-[step:main.backfill:skipped] *Backfill* · Skipped
-[step:main.aggregates:succeeded] *Aggregates* · Completed
+[step:main.parquet_delta:succeeded] COMPLETED: *Parquet → Delta*
+[step:main.backfill:skipped] SKIPPED: *Backfill*
+[step:main.aggregates:succeeded] COMPLETED: *Aggregates*
 === alerts ===

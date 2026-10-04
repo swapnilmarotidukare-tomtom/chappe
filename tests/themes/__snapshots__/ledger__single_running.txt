@@ -6,5 +6,5 @@
 
 :stopwatch: Last updated 09:28 UTC
 === thread ===
-[step:main.geometry:started] *Geometry* · started
+[step:main.geometry:started] STARTED: *Geometry*
 === alerts ===

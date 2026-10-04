@@ -106,11 +106,13 @@ STEPS = ["Extract", "Transform", "Load", "Report"]
 
 
 def replies_by_step(texts: list[str]) -> dict[str, list[str]]:
-    """Step replies (`<icon> *<name>* · ...`) grouped by step name, in posting order."""
+    """Step replies (`STATUS: *<name>*…`) as `STATUS…`, grouped by step name, in posting order."""
     found: dict[str, list[str]] = {}
     for text in texts:
-        if text.count("*") >= 2 and not text.startswith("<@"):
-            found.setdefault(text.split("*")[1], []).append(text.split("* · ", 1)[1])
+        if ": *" in text and not text.startswith("<@"):
+            status, _, rest = text.partition(": *")
+            name, _, tail = rest.partition("*")
+            found.setdefault(name, []).append(status + tail)
     return found
 
 
@@ -171,8 +173,8 @@ def test_passing_run_lists_every_step_with_each_start_and_end_in_the_thread(
     assert sorted(steps) == sorted(STEPS)
     for name in STEPS:
         started, ended = steps[name]
-        assert started == "started", (name, started)
-        assert ended.startswith("Completed"), (name, ended)
+        assert started == "STARTED", (name, started)
+        assert ended.startswith("COMPLETED"), (name, ended)
     assert_kept(store, run_id, parent.ts)
 
 
@@ -205,7 +207,7 @@ def test_failing_run_lists_the_failing_steps_and_alerts_once(
     assert alert.startswith("<@U0123456789> :red_circle: *chappe_example · ")
     assert "* · Load" in alert and "Report: An upstream task failed" in alert
     steps = replies_by_step(replies)
-    assert steps["Load"][0] == "started"
-    assert steps["Load"][-1].startswith("Failed ")
-    assert steps["Report"] == ["Failed\nAn upstream task failed"]  # never started: end only
+    assert steps["Load"][0] == "STARTED"
+    assert steps["Load"][-1].startswith("FAILED")
+    assert steps["Report"] == ["FAILED\nAn upstream task failed"]  # never started: end only
     assert_kept(store, run_id, parent.ts)

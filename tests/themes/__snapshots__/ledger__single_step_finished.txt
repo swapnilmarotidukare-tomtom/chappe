@@ -6,6 +6,6 @@
 
 :stopwatch: Last updated 13:49 UTC
 === thread ===
-[step:main.geometry:started] *Geometry* · started
-[step:main.geometry:succeeded] *Geometry* · Completed · 4h 21m
+[step:main.geometry:started] STARTED: *Geometry*
+[step:main.geometry:succeeded] COMPLETED: *Geometry* · 4h 21m
 === alerts ===

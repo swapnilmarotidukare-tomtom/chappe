@@ -128,8 +128,8 @@ def test_an_empty_header_token_leaves_no_mark() -> None:
 def test_thread_gets_a_start_and_an_end_reply_from_the_steps_own_times() -> None:
     entries = render(SAMPLES["single_step_finished"]).thread
     assert [(e.key, e.text) for e in entries] == [
-        ("step:main.geometry:started", "*Geometry* · started"),
-        ("step:main.geometry:succeeded", "*Geometry* · Completed · 4h 21m"),
+        ("step:main.geometry:started", "STARTED: *Geometry*"),
+        ("step:main.geometry:succeeded", "COMPLETED: *Geometry* · 4h 21m"),
     ]
     assert not any(e.broadcast for e in entries)
 
@@ -142,10 +142,10 @@ def test_a_running_step_gets_only_its_start_reply() -> None:
 def test_a_finished_run_gives_every_finished_step_an_end_reply_untimed() -> None:
     entries = render(SAMPLES["single_failed"]).thread
     assert [(e.key, e.text) for e in entries] == [
-        ("step:main.parquet_delta:succeeded", "*Parquet → Delta* · Completed"),
+        ("step:main.parquet_delta:succeeded", "COMPLETED: *Parquet → Delta*"),
         (
             "step:main.geometry:failed",
-            "*Geometry* · Failed\nExecutor ran out of memory after 3 retries",
+            "FAILED: *Geometry*\nExecutor ran out of memory after 3 retries",
         ),
     ]
 
@@ -179,9 +179,9 @@ def test_a_failed_step_with_its_own_times_gets_its_duration_and_error_in_the_thr
         ProcessViewBuilder().section("Main").step("Load", F, 2, error="ValueError: bad row").build()
     )
     (start, end) = render(view).thread
-    assert start.text == "*Load* · started"
+    assert start.text == "STARTED: *Load*"
     assert end.key == "step:main.load:failed"
-    assert end.text == "*Load* · Failed · 2m\nValueError: bad row"
+    assert end.text == "FAILED: *Load* · 2m\nValueError: bad row"
 
 
 def test_a_skipped_step_gets_its_end_reply_only_once_the_run_finished() -> None:

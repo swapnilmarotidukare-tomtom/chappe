@@ -10,9 +10,9 @@
 
 :stopwatch: Last updated 18:16 UTC
 === thread ===
-[step:prepare.parquet_delta:succeeded] *Parquet → Delta* · Completed
-[step:prepare.geometry:succeeded] *Geometry* · Completed
-[step:prepare.aggregates:succeeded] *Aggregates* · Completed
-[step:regression_vs_baseline_2026_10_0.id_stability:succeeded] *ID stability* · Completed
-[step:regression_vs_baseline_2026_10_0.regression:succeeded] *Regression* · Completed
+[step:prepare.parquet_delta:succeeded] COMPLETED: *Parquet → Delta*
+[step:prepare.geometry:succeeded] COMPLETED: *Geometry*
+[step:prepare.aggregates:succeeded] COMPLETED: *Aggregates*
+[step:regression_vs_baseline_2026_10_0.id_stability:succeeded] COMPLETED: *ID stability*
+[step:regression_vs_baseline_2026_10_0.regression:succeeded] COMPLETED: *Regression*
 === alerts ===

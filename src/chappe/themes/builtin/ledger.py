@@ -175,10 +175,10 @@ class LedgerTheme:
         """Spec 6.4 rule 7: a reply only from a view with the step's own times, or, for end
         replies without times, once the run has finished. Skipped steps wait for the run's end."""
         entries: list[tuple[datetime, int, int, ThreadEntry]] = []
-        started = ctx.tokens.extra.get("started", "started")
+        started = ctx.tokens.extra.get("reply_started", "STARTED")
         for index, step in enumerate(view.steps):
             if step.started_at is not None:
-                text = f"{ctx.fmt.bold(step.title)} · {started}"
+                text = f"{started}: {ctx.fmt.bold(step.title)}"
                 entry = ThreadEntry(f"step:{step.key}:started", clip(text, ctx.limits.entry_chars))
                 entries.append((step.started_at, index, 0, entry))
             own_end = step.ended_at is not None and step.state is not StepState.SKIPPED
@@ -193,7 +193,8 @@ class LedgerTheme:
         return tuple(entry for _, _, _, entry in entries)
 
     def _end(self, step: StepView, view: ProcessView, ctx: RenderContext) -> str:
-        text = f"{ctx.fmt.bold(step.title)} · {ctx.label(step.state)}"
+        # the status leads, in capitals, so it reads at a glance whatever the step name
+        text = f"{ctx.label(step.state).upper()}: {ctx.fmt.bold(step.title)}"
         if step.state is not StepState.SKIPPED and _timed(step):
             text += f" · {ctx.duration(step.duration(view.now))}"
         if step.error:

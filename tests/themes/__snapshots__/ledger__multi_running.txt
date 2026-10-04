@@ -10,5 +10,5 @@
 
 :stopwatch: Last updated 13:59 UTC
 === thread ===
-[step:regression_vs_baseline_2026_10_0.id_stability:started] *ID stability* · started
+[step:regression_vs_baseline_2026_10_0.id_stability:started] STARTED: *ID stability*
 === alerts ===
